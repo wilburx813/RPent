@@ -106,3 +106,28 @@ def get_anthropic_base_url() -> str | None:
 
 def get_anthropic_model() -> str:
     return os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+
+
+# ============================================================================
+# OpenAI-compatible API  (env-only — no hard-coded fallback for secrets)
+# ============================================================================
+
+def get_openai_compat_api_key() -> str | None:
+    """Return the API key for OpenAI-compatible chat-completion providers."""
+    return os.environ.get("OPENAI_COMPAT_API_KEY") or os.environ.get("OPENAI_API_KEY")
+
+
+def get_openai_compat_base_url() -> str | None:
+    """Return the optional base URL for an OpenAI-compatible provider."""
+    return os.environ.get("OPENAI_COMPAT_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
+
+
+def get_openai_compat_model() -> str:
+    """Return the default model id for the OpenAI-compatible backend."""
+    return os.environ.get("OPENAI_COMPAT_MODEL", "gpt-4.1")
+
+
+def get_openai_compat_supports_images() -> bool:
+    """Return whether OpenAI-compatible tool results should include images."""
+    value = os.environ.get("OPENAI_COMPAT_SUPPORTS_IMAGES", "1")
+    return value.lower() not in {"0", "false", "no", "off"}

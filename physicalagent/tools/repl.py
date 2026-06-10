@@ -1,9 +1,8 @@
 """Tool implementations for the hybrid LLM-in-the-loop agent.
 
-Each tool is a thin wrapper that the agent calls via Anthropic's tool-use
-API. Results are JSON-serializable dicts; for image-bearing tools the
-caller (runner.py) converts a `_image_path` field into a multimodal
-content block.
+Each tool is a thin wrapper that the agent calls via an LLM tool-use API.
+Results are JSON-serializable dicts; for image-bearing tools the caller
+(runner.py) converts a `_image_path` field into a multimodal content block.
 """
 from __future__ import annotations
 
@@ -37,7 +36,7 @@ def set_workdir(path: str | os.PathLike) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tool schema declarations (passed to the Anthropic API)
+# Tool schema declarations (Anthropic-shaped canonical schema)
 # ---------------------------------------------------------------------------
 
 TOOLS_SPEC = [

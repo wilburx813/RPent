@@ -1,4 +1,4 @@
-"""Hybrid LLM-in-the-loop agent — Anthropic API runner.
+"""Hybrid LLM-in-the-loop agent runner.
 
 Drives interactive_driver.py through tool calls. Supports:
 - Starting the driver as a subprocess (or attaching to an existing one)
@@ -11,6 +11,7 @@ Use as a script (see __main__ at the bottom) or import `run_one_cell`.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import shutil
@@ -23,28 +24,29 @@ from pathlib import Path
 # Auto-detect project paths: this file is at
 # <repo>/physicalagent/apps/libero/runner.py
 from physicalagent.config import (
-    get_repo_root,
-    get_python_bin,
-    get_repl_driver_script,
-    get_default_workdir_prefix,
-    get_cuda_device,
-    get_libero_type,
     get_anthropic_api_key,
     get_anthropic_base_url,
     get_anthropic_model,
+    get_cuda_device,
+    get_default_workdir_prefix,
+    get_libero_type,
     get_memory_dir,
+    get_openai_compat_api_key,
+    get_openai_compat_base_url,
+    get_openai_compat_model,
+    get_openai_compat_supports_images,
+    get_python_bin,
+    get_repl_driver_script,
+    get_repo_root,
 )
 
 REPO_ROOT = get_repo_root()
 DEFAULT_DRIVER_CMD = get_python_bin()
 DEFAULT_DRIVER_SCRIPT = str(get_repl_driver_script())
 
-from physicalagent.tools.repl import (  # noqa: E402
-    execute_tool,
-    get_tools_spec,
-    tool_result_to_content_blocks,
-    set_workdir as tools_set_workdir,
-)
+from physicalagent.cerebrum.anthropic import AnthropicCerebrum  # noqa: E402
+from physicalagent.cerebrum.claude_code import ClaudeCodeCerebrum  # noqa: E402
+from physicalagent.cerebrum.openai_compat import OpenAICompatibleCerebrum  # noqa: E402
 from physicalagent.context.libero_prompts import (  # noqa: E402
     CLAUDE_CODE_PERCEPTION_PROMPT_TEMPLATE,
     CLAUDE_CODE_PROMPT_TEMPLATE,
@@ -55,8 +57,12 @@ from physicalagent.context.libero_prompts import (  # noqa: E402
     format_claude_code_prompt,
 )
 from physicalagent.logging import make_log_dir  # noqa: E402
-from physicalagent.cerebrum.anthropic import AnthropicCerebrum  # noqa: E402
-from physicalagent.cerebrum.claude_code import ClaudeCodeCerebrum  # noqa: E402
+from physicalagent.tools.repl import (  # noqa: E402
+    execute_tool,
+    get_tools_spec,
+    tool_result_to_content_blocks,
+    set_workdir as tools_set_workdir,
+)
 
 
 def start_driver(
@@ -115,12 +121,12 @@ def start_driver(
         cwd=str(REPO_ROOT),
     )
 
-    print(f"[agent] waiting for state_00.json (Pi0 load ~80s)...")
+    print("[agent] waiting for state_00.json (Pi0 load ~80s)...")
     t0 = time.time()
     while not (wd / "state_00.json").exists():
         time.sleep(2)
         if proc.poll() is not None:
-            print(f"[agent] driver EXITED before becoming ready. Last log:")
+            print("[agent] driver EXITED before becoming ready. Last log:")
             print(Path(log_path).read_text()[-2000:])
             raise RuntimeError("driver exited prematurely")
         if time.time() - t0 > ready_timeout_s:
@@ -150,34 +156,38 @@ def stop_driver(proc: subprocess.Popen, workdir: str | None = None, timeout: flo
 
 
 # ---------------------------------------------------------------------------
-# Anthropic API agent loop
+# API agent transcript serialization
 # ---------------------------------------------------------------------------
 
 
 def _serialize_messages(messages: list[dict]) -> list[dict]:
-    """Convert SDK objects in `content` to plain dicts so they're JSON-safe."""
+    """Convert SDK objects in messages to plain dicts so they're JSON-safe."""
     out = []
     for m in messages:
-        c = m["content"]
-        if isinstance(c, str):
-            out.append({"role": m["role"], "content": c})
-            continue
-        new_blocks = []
-        for b in c:
-            if isinstance(b, dict):
-                # Don't write large base64 images to disk — replace with a stub
-                if b.get("type") == "image":
-                    new_blocks.append({"type": "image", "source": {"_omitted_for_transcript": True}})
-                else:
-                    new_blocks.append(b)
-                continue
-            bd: dict = {"type": getattr(b, "type", "?")}
-            for attr in ("text", "name", "input", "id"):
-                if hasattr(b, attr):
-                    bd[attr] = getattr(b, attr)
-            new_blocks.append(bd)
-        out.append({"role": m["role"], "content": new_blocks})
+        message = {k: v for k, v in m.items() if k != "content"}
+        message["content"] = _sanitize_transcript_content(m.get("content"))
+        out.append(message)
     return out
+
+
+def _sanitize_transcript_content(value):
+    """Return a JSON-safe copy while omitting large inline image payloads."""
+    if isinstance(value, str) or value is None:
+        return value
+    if isinstance(value, list):
+        return [_sanitize_transcript_content(v) for v in value]
+    if isinstance(value, dict):
+        if value.get("type") == "image":
+            return {"type": "image", "source": {"_omitted_for_transcript": True}}
+        if value.get("type") == "image_url":
+            return {"type": "image_url", "image_url": {"_omitted_for_transcript": True}}
+        return {k: _sanitize_transcript_content(v) for k, v in value.items()}
+
+    block: dict = {"type": getattr(value, "type", "?")}
+    for attr in ("text", "name", "input", "id"):
+        if hasattr(value, attr):
+            block[attr] = _sanitize_transcript_content(getattr(value, attr))
+    return block
 
 
 # ---------------------------------------------------------------------------
@@ -298,6 +308,7 @@ def run_one_cell(
     perception: bool = False,
     libero_type: str | None = None,
     cerebrum_type: str = "anthropic",
+    openai_compat_supports_images: bool | None = None,
     claude_code_timeout_s: int | None = None,
     claude_code_max_budget_usd: float | None = None,
 ) -> dict:
@@ -311,10 +322,9 @@ def run_one_cell(
 
     ``cerebrum_type`` selects the LLM backend:
     - ``"anthropic"`` — Anthropic Messages API with tool-use (default).
+    - ``"openai_compat"`` — OpenAI-compatible Chat Completions with tool-use.
     - ``"claude_code"`` — delegates to ``claude -p`` (Claude Code).
     """
-    import anthropic
-
     if max_episode_steps == 600 and "libero_10" in suite:
         max_episode_steps = 5000
         if verbose:
@@ -351,6 +361,33 @@ def run_one_cell(
             client=client,
             model=model or get_anthropic_model(),
             max_tokens=max_tokens,
+        )
+    elif cerebrum_type == "openai_compat":
+        api_key = api_key or get_openai_compat_api_key()
+        base_url = base_url or get_openai_compat_base_url()
+        if not api_key:
+            raise ValueError("api_key is required for openai_compat cerebrum")
+        try:
+            openai_module = importlib.import_module("openai")
+        except ImportError as e:
+            raise RuntimeError(
+                "openai package is required for --cerebrum openai_compat; "
+                "install physicalagent with updated dependencies or run "
+                "`pip install openai`."
+            ) from e
+
+        client_kwargs = {"api_key": api_key, "max_retries": 0, "timeout": 120.0}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        client = openai_module.OpenAI(**client_kwargs)
+        supports_images = openai_compat_supports_images
+        if supports_images is None:
+            supports_images = get_openai_compat_supports_images()
+        cerebrum = OpenAICompatibleCerebrum(
+            client=client,
+            model=model or get_openai_compat_model(),
+            max_tokens=max_tokens,
+            supports_images=supports_images,
         )
     elif cerebrum_type == "claude_code":
         cc_timeout_s = claude_code_timeout_s
@@ -499,7 +536,7 @@ def _build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--task", type=int, required=True)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--model", default=None,
-                    help="Model id. Defaults to ANTHROPIC_MODEL env or claude-sonnet-4-5.")
+                    help="Model id. Defaults to the selected backend's model env var.")
     ap.add_argument("--max_turns", type=int, default=80)
     ap.add_argument("--max_tokens", type=int, default=4096)
     ap.add_argument("--max_episode_steps", type=int, default=600)
@@ -507,14 +544,14 @@ def _build_argparser() -> argparse.ArgumentParser:
                     help="GPU device. Defaults to CUDA_DEVICE env or 0.")
     ap.add_argument("--output_dir", default=None)
     ap.add_argument("--api_key", default=None,
-                    help="Anthropic API key (required for --cerebrum anthropic). "
-                         "Defaults to ANTHROPIC_API_KEY env var.")
+                    help="API key. Defaults to the selected backend's API key env var.")
     ap.add_argument("--base_url", default=None,
-                    help="Override Anthropic base URL. "
-                         "Defaults to ANTHROPIC_BASE_URL env var.")
+                    help="API base URL. Defaults to the selected backend's base URL env var.")
     ap.add_argument("--cerebrum", default="anthropic",
-                    choices=["anthropic", "claude_code"],
-                    help="LLM backend: anthropic (API tool-use) | claude_code (claude -p CLI).")
+                    choices=["anthropic", "openai_compat", "claude_code"],
+                    help="LLM backend: anthropic | openai_compat | claude_code.")
+    ap.add_argument("--openai_compat_no_images", action="store_true",
+                    help="Do not send tool-result images to an openai_compat model.")
     ap.add_argument("--claude_code_timeout_s", type=int, default=None,
                     help="Wall-clock cap for claude -p. Defaults to CELL_TIMEOUT_S, "
                          "or 1200 in --perception mode / 600 otherwise.")
@@ -540,9 +577,17 @@ def main() -> int:
     ap = _build_argparser()
     args = ap.parse_args()
 
-    api_key = args.api_key or get_anthropic_api_key()
+    if args.cerebrum == "openai_compat":
+        api_key = args.api_key or get_openai_compat_api_key()
+        base_url = args.base_url or get_openai_compat_base_url()
+    else:
+        api_key = args.api_key or get_anthropic_api_key()
+        base_url = args.base_url or get_anthropic_base_url()
     if args.cerebrum == "anthropic" and not api_key:
         print("ERROR: set ANTHROPIC_API_KEY env var or pass --api_key", file=sys.stderr)
+        return 2
+    if args.cerebrum == "openai_compat" and not api_key:
+        print("ERROR: set OPENAI_COMPAT_API_KEY or OPENAI_API_KEY or pass --api_key", file=sys.stderr)
         return 2
 
     run_one_cell(
@@ -556,11 +601,12 @@ def main() -> int:
         output_dir=args.output_dir,
         no_driver=args.no_driver,
         verbose=not args.quiet,
-        base_url=args.base_url or get_anthropic_base_url(),
+        base_url=base_url,
         workdir=args.workdir,
         perception=args.perception,
         libero_type=args.libero_type,
         cerebrum_type=args.cerebrum,
+        openai_compat_supports_images=not args.openai_compat_no_images,
         claude_code_timeout_s=args.claude_code_timeout_s,
         claude_code_max_budget_usd=args.claude_code_max_budget_usd,
     )

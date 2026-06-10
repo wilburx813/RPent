@@ -10,6 +10,10 @@ Usage:
     export ANTHROPIC_API_KEY=sk-...
     export ANTHROPIC_BASE_URL=https://...
 
+    # Or for OpenAI-compatible providers:
+    export OPENAI_COMPAT_API_KEY=sk-...
+    export OPENAI_COMPAT_BASE_URL=https://provider.example/v1
+
     # 4 seeds of libero_spatial_lan t0 on GPUs 0..3:
     python parallel_launch.py \\
         --suite libero_spatial_lan --task 0 \\
@@ -23,7 +27,7 @@ interactive_driver), waits for all to finish, then prints a summary.
 Notes:
   - Each subprocess does its own Pi0 model load (~80 s); they run
     concurrently so total wall time is roughly max(per-cell) not sum.
-  - Anthropic API calls are concurrent — make sure your endpoint can
+    - API calls are concurrent — make sure your endpoint can
     handle the parallel rate. If you hit rate limits, drop the
     concurrency by passing fewer cuda_devices than seeds (the extras
     queue up).
@@ -34,13 +38,18 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-from physicalagent.config import get_python_bin, get_anthropic_api_key, get_anthropic_base_url
+from physicalagent.config import (
+    get_anthropic_api_key,
+    get_anthropic_base_url,
+    get_openai_compat_api_key,
+    get_openai_compat_base_url,
+    get_python_bin,
+)
 
 _THIS_DIR = Path(__file__).resolve().parent
 
@@ -75,7 +84,7 @@ def _runner_cmd(
     seed: int,
     cuda_device: str,
     workdir: str,
-    model: str,
+    model: str | None,
     max_turns: int,
     max_tokens: int,
     max_episode_steps: int,
@@ -87,6 +96,7 @@ def _runner_cmd(
     libero_type: str | None,
     claude_code_timeout_s: int | None,
     claude_code_max_budget_usd: float | None,
+    openai_compat_no_images: bool,
 ) -> list[str]:
     cmd = [
         python_bin,
@@ -96,13 +106,14 @@ def _runner_cmd(
         "--seed", str(seed),
         "--cuda_device", str(cuda_device),
         "--workdir", workdir,
-        "--model", model,
         "--max_turns", str(max_turns),
         "--max_tokens", str(max_tokens),
         "--max_episode_steps", str(max_episode_steps),
         "--output_dir", output_dir,
         "--cerebrum", cerebrum,
     ]
+    if model:
+        cmd += ["--model", model]
     if perception:
         cmd += ["--perception"]
     if libero_type:
@@ -113,8 +124,10 @@ def _runner_cmd(
         cmd += ["--claude_code_max_budget_usd", str(claude_code_max_budget_usd)]
     if base_url:
         cmd += ["--base_url", base_url]
-    if api_key and cerebrum == "anthropic":
+    if api_key and cerebrum in {"anthropic", "openai_compat"}:
         cmd += ["--api_key", api_key]
+    if openai_compat_no_images:
+        cmd += ["--openai_compat_no_images"]
     return cmd
 
 
@@ -129,8 +142,9 @@ def main() -> int:
                     help="Alternative to --seeds: explicit (suite,task,seed) "
                          "triples e.g. libero_spatial_lan:0:0 libero_spatial_lan:0:1")
     ap.add_argument("--cuda_devices", type=str, nargs="+", default=["0", "1", "2", "3"])
-    ap.add_argument("--model", default="claude-sonnet-4-5")
-    ap.add_argument("--cerebrum", default="anthropic", choices=["anthropic", "claude_code"],
+    ap.add_argument("--model", default=None,
+                    help="Model id. Defaults to the selected backend's model env var.")
+    ap.add_argument("--cerebrum", default="anthropic", choices=["anthropic", "openai_compat", "claude_code"],
                     help="LLM backend passed to runner.py.")
     ap.add_argument("--max_turns", type=int, default=40)
     ap.add_argument("--max_tokens", type=int, default=4096)
@@ -138,9 +152,9 @@ def main() -> int:
     ap.add_argument("--output_dir", required=True)
     ap.add_argument("--log_dir", default="/tmp")
     ap.add_argument("--api_key", default=None,
-                    help="defaults to ANTHROPIC_API_KEY env var")
+                    help="defaults to the selected backend's API key env var")
     ap.add_argument("--base_url", default=None,
-                    help="defaults to ANTHROPIC_BASE_URL env var")
+                    help="defaults to the selected backend's base URL env var")
     ap.add_argument("--python_bin", default=get_python_bin())
     ap.add_argument("--workdir_root", default=None,
                     help="Each cell gets a fresh <root>/hybrid_repl_<tag>/ directory. "
@@ -158,6 +172,8 @@ def main() -> int:
                     help="Wall-clock cap for claude -p cells. Defaults in runner.py.")
     ap.add_argument("--claude_code_max_budget_usd", type=float, default=None,
                     help="Budget passed to claude -p --max-budget-usd.")
+    ap.add_argument("--openai_compat_no_images", action="store_true",
+                    help="Do not send tool-result images to an openai_compat model.")
     ap.add_argument("--dry_run", action="store_true")
     args = ap.parse_args()
 
@@ -177,11 +193,18 @@ def main() -> int:
         print("nothing to do (pass --seeds or --tuples)", file=sys.stderr)
         return 2
 
-    api_key = args.api_key or get_anthropic_api_key()
+    if args.cerebrum == "openai_compat":
+        api_key = args.api_key or get_openai_compat_api_key()
+        base_url = args.base_url or get_openai_compat_base_url()
+    else:
+        api_key = args.api_key or get_anthropic_api_key()
+        base_url = args.base_url or get_anthropic_base_url()
     if args.cerebrum == "anthropic" and not api_key:
         print("ERROR: ANTHROPIC_API_KEY missing", file=sys.stderr)
         return 2
-    base_url = args.base_url or get_anthropic_base_url()
+    if args.cerebrum == "openai_compat" and not api_key:
+        print("ERROR: OPENAI_COMPAT_API_KEY or OPENAI_API_KEY missing", file=sys.stderr)
+        return 2
 
     n_devices = len(args.cuda_devices)
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
@@ -240,6 +263,7 @@ def main() -> int:
             libero_type=args.libero_type,
             claude_code_timeout_s=args.claude_code_timeout_s,
             claude_code_max_budget_usd=args.claude_code_max_budget_usd,
+            openai_compat_no_images=args.openai_compat_no_images,
         )
 
         print(f"  [{i}] {tag}  GPU={cuda}  workdir={workdir}  log={log_path}")
@@ -249,11 +273,17 @@ def main() -> int:
 
         log_f = open(log_path, "w")
         env = os.environ.copy()
-        # API key/base also via env as a fallback for the Anthropic backend.
-        if api_key:
-            env["ANTHROPIC_API_KEY"] = api_key
-        if base_url:
-            env["ANTHROPIC_BASE_URL"] = base_url
+        # API key/base also via env as a fallback for the selected API backend.
+        if args.cerebrum == "openai_compat":
+            if api_key:
+                env["OPENAI_COMPAT_API_KEY"] = api_key
+            if base_url:
+                env["OPENAI_COMPAT_BASE_URL"] = base_url
+        else:
+            if api_key:
+                env["ANTHROPIC_API_KEY"] = api_key
+            if base_url:
+                env["ANTHROPIC_BASE_URL"] = base_url
         # Stagger launches so 4 agents don't hammer the API at the same
         # instant during initial guide reading (proxy may refuse parallel
         # TLS handshakes). Also spreads Pi0 model-load disk IO.
