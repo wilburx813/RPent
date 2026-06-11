@@ -8,7 +8,8 @@ To begin with,
 1. clone RLinf and physical agent side-by-side.
 ```bash
 mkdir workspace && cd workspace
-git clone https://github.com/RLinf/RLinf rlinf
+# physicalagent depends on a forked branch of RLinf; we plan to merge the branch back to main after some more iterations
+git clone https://github.com/RLinf/RLinf -b feature/physicalagent rlinf
 git clone https://github.com/jx-qiu/PhysicalAgent physicalagent
 ```
 2. in RLinf, configure a openpi+libero venv.
