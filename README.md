@@ -23,7 +23,7 @@ source .venv-opi-libero/bin/activate
 ```bash
 cd physicalagent
 uv sync --active --inexact
-bash install_libero_pro_plus.sh
+bash scripts/install_libero_pro_plus.sh
 ```
 4. Try the run: 
 ```bash
