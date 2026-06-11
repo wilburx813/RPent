@@ -81,7 +81,7 @@ class CodexCerebrum:
                 prompt_file = f.name
 
             model_desc = self._model if self._model else "(configured default)"
-            logger.info("prompt: %d chars → %s", len(full_prompt), prompt_file)
+            logger.info("prompt: %d chars -> %s", len(full_prompt), prompt_file)
             logger.info("workdir: %s", self._workdir)
             logger.info(
                 "invoking codex exec --model %s (timeout=%ds)",
@@ -423,8 +423,8 @@ def _is_tool_item_type(item_type: str) -> bool:
 
 def _render_tool_event(event: dict[str, Any], event_type: str) -> str:
     name = event.get("name") or event.get("tool") or event.get("command") or event_type
-    arrow = "←" if any(k in event_type for k in ("result", "output", "end", "complete")) else "→"
-    payload = _summarise_tool_result(event) if arrow == "←" else _tool_input_payload(event)
+    arrow = "<-" if any(k in event_type for k in ("result", "output", "end", "complete")) else "->"
+    payload = _summarise_tool_result(event) if arrow == "<-" else _tool_input_payload(event)
     if isinstance(payload, (dict, list)):
         payload_text = json.dumps(payload, ensure_ascii=False, default=str)
     else:
@@ -445,14 +445,14 @@ def _render_codex_item_started(item: Any) -> str:
     if item_type in {"exec_command", "command_execution"}:
         command = item.get("command") or item.get("cmd") or ""
         payload = {"command": _truncate_text(str(command), 200)} if command else {}
-        return f"[tool→] exec_command: {json.dumps(payload, ensure_ascii=False)}\n"
+        return f"[tool->] exec_command: {json.dumps(payload, ensure_ascii=False)}\n"
     if item_type in {"tool_call", "function_call", "mcp_tool_call"}:
         name = item.get("name") or item.get("tool_name") or item_type
         payload = _tool_input_payload(item)
         payload_text = json.dumps(payload, ensure_ascii=False, default=str) if payload else "{}"
         if len(payload_text) > 500:
             payload_text = payload_text[:500] + f"...(+{len(payload_text) - 500})"
-        return f"[tool→] {name}: {payload_text}\n"
+        return f"[tool->] {name}: {payload_text}\n"
     return ""
 
 
@@ -481,7 +481,7 @@ def _render_codex_item(item: Any) -> str:
         payload_text = json.dumps(_summarise_tool_result(item), ensure_ascii=False, default=str)
         if len(payload_text) > 500:
             payload_text = payload_text[:500] + f"...(+{len(payload_text) - 500})"
-        return f"[tool←] {name}: {payload_text}\n"
+        return f"[tool<-] {name}: {payload_text}\n"
     return _render_generic_event(item)
 
 

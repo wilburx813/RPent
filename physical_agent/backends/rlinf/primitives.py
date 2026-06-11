@@ -260,7 +260,7 @@ class LiberoPrimitiveDriver:
             actions_np = actions
 
         # Pi0.5 emits float in normalized action space already unwrapped by
-        # output_transform → safe to feed directly. prepare_actions_for_libero
+        # output_transform -> safe to feed directly. prepare_actions_for_libero
         # is a no-op for openpi.
         obs_list, _rew, term, _trunc, _info = self.env.chunk_step(actions_np)
         # Per-step rendering for diagnostic video. chunk_step ran action_chunk
@@ -449,7 +449,7 @@ class LiberoPrimitiveDriver:
 
         Sends 7-D delta actions; the env's underlying OSC_POSE controller
         interprets ``action[:3] ∈ [-1, 1]`` as a per-step desired delta scaled
-        by ``action_scale`` (so ``action=1.0`` → ~5 cm per env step).
+        by ``action_scale`` (so ``action=1.0`` -> ~5 cm per env step).
         gripper_action: +1.0 keeps it closed (holding object), -1.0 opens.
         """
         target = np.asarray(target_xyz, dtype=np.float32)
@@ -467,7 +467,7 @@ class LiberoPrimitiveDriver:
                 break
             step_dxyz = np.clip(diff, -step_clip, step_clip)
             action = np.zeros(7, dtype=np.float32)
-            action[:3] = step_dxyz / action_scale  # → roughly [-0.5, 0.5]
+            action[:3] = step_dxyz / action_scale  # -> roughly [-0.5, 0.5]
             action[:3] = np.clip(action[:3], -1.0, 1.0)
             if target_yaw is not None:
                 # add wrist yaw control via action[5] (z-axis axis-angle).
@@ -597,11 +597,11 @@ class LiberoPrimitiveDriver:
 
             pitch = atan2(R[1, 2], -R[2, 2])
 
-        - pitch =  0       → gripper z-axis aligned with world -z (default
+        - pitch =  0       -> gripper z-axis aligned with world -z (default
                               "gripper down" rest pose).
-        - pitch = +pi/2    → gripper z-axis points in world +y (gripper
+        - pitch = +pi/2    -> gripper z-axis points in world +y (gripper
                               "looking forward" along world +y).
-        - pitch = -pi/2    → gripper z-axis points in world -y.
+        - pitch = -pi/2    -> gripper z-axis points in world -y.
 
         Driven by ``action[3]`` (axis-angle X component) of the OSC_POSE
         controller. Sign verified empirically (probe_pitch.py 2026-05-19):
@@ -916,7 +916,7 @@ def main():
         "--mode",
         choices=["full", "subinstr", "pick_only"],
         default="pick_only",
-        help="full=baseline; subinstr=pick→place sub-instructions; "
+        help="full=baseline; subinstr=pick->place sub-instructions; "
         "pick_only=just pick sub-instruction",
     )
     p.add_argument("--seed", type=int, default=0)

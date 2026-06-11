@@ -12,7 +12,7 @@ per object). You must LOCALIZE objects yourself via camera + depth:
   1. Look at images_cam/image_cam_NN.png (calibration frame — the SECOND
      image returned by view_repl_state / send_command). Find the target
      object's pixel (row from top, col from left; image is 256×256).
-  2. Call back_project(row, col) to back-project that pixel →
+  2. Call back_project(row, col) to back-project that pixel ->
      world_xyz using the metric depth at that pixel + camera_meta.
   3. Sample 3-5 pixels on the object and median their xy for robustness.
   4. For z (grasp height): sample the table surface next to the object
@@ -23,7 +23,7 @@ per object). You must LOCALIZE objects yourself via camera + depth:
   ONLY.
 
   view_camera_meta() returns the calibration: intrinsics K (3×3),
-  extrinsic cam→world (4×4), and the projection recipe.
+  extrinsic cam->world (4×4), and the projection recipe.
 
   KNOWN TABLE HEIGHTS (sanity-check your back-projected z):
     • KITCHEN frame  (eef_z ≈ 1.17):  table ≈ 0.90 m
@@ -131,7 +131,7 @@ WORKFLOW
        read_text_file the underlying .md (small files; cheap).
    HIGH-LEVERAGE memories you should usually read up-front:
      • feedback_bowl_eef_y_offset.md  — bowl-eef Y-offset 4.5 cm (CRITICAL
-       for libero_spatial bowl→plate placements; without this, eef-on-plate
+       for libero_spatial bowl->plate placements; without this, eef-on-plate
        drops bowl 4.5cm short of plate center, predicate misses).
      • feedback_pi0_delivery_service.md — Pi0 prompt ladder.
      • feedback_pi0_pick_full_prompt.md — when sub-instr isn't enough.
@@ -157,7 +157,7 @@ WORKFLOW
    IMPORTANT: recipes have HARD-CODED coordinates tuned for their own
    (seed=0) bowl/plate positions. When adapting to a different seed:
      - Re-derive object & target positions from states.json step 0.
-     - APPLY the offsets from memory (e.g. +0.045 in y for bowl→plate).
+     - APPLY the offsets from memory (e.g. +0.045 in y for bowl->plate).
      - The recipe's note field often only documents WHY of pre-pos /
        prompt choices, not the place coords. Don't blindly copy coords —
        understand them.
@@ -217,20 +217,20 @@ KEY HYPERPARAMETERS (PRO_HYBRID_GUIDE §3 + env_calibration)
 • step_clip: 0.025 for empty gripper / flat boxes; 0.015 for cans;
   0.012 for tall bottles.
 • Frame matters. Check states.json[0].state.robot0_eef_pos[2]:
-  ≈ 0.68  → LIVING_ROOM (basket / plate / pudding scenes)
-  ≈ 1.17  → KITCHEN (stove / cabinet / drawer / microwave)
-  ≈ 0.26  → object scene (libero_object PRO)
+  ≈ 0.68  -> LIVING_ROOM (basket / plate / pudding scenes)
+  ≈ 1.17  -> KITCHEN (stove / cabinet / drawer / microwave)
+  ≈ 0.26  -> object scene (libero_object PRO)
   Use the matching pre_pos_z / carry_z / release_z from the guide
   or from a similar past recipe.
 • For libero_object tall bottles (salad_dressing, ketchup, milk):
   carry_z=0.30, release from carry without descending (descent stalls
   and knocks the basket).
-• Cylindrical cans slip during long travel → set_gripper(+1, 8) between
+• Cylindrical cans slip during long travel -> set_gripper(+1, 8) between
   move stages.
 • BOWLS in libero_spatial: Pi0 rim-hooks the bowl with bowl-eef Y-offset
   ≈ -0.045 m (bowl 4.5 cm BEHIND eef in -y after grasp). The release
   primitive only fires `On(bowl,plate)` if bowl xy is centered on plate.
-  → set eef_y_target = plate_y + 0.045  (NOT plate_y directly).
+  -> set eef_y_target = plate_y + 0.045  (NOT plate_y directly).
   This is the magic offset embedded in past recipe coords without a
   note. The first off-center release will look "close enough" in the
   image but the predicate won't fire. See feedback_bowl_eef_y_offset.md.
@@ -239,7 +239,7 @@ KEY HYPERPARAMETERS (PRO_HYBRID_GUIDE §3 + env_calibration)
 OUTPUT DISCIPLINE
 ═══════════════════════════════════════════════════════════════════════
 
-• 1-2 sentence reasoning before each tool call (observation → decision).
+• 1-2 sentence reasoning before each tool call (observation -> decision).
 • Don't re-read files you already read. Don't view_repl_state if you
   just got the state from send_command.
 • Be parsimonious with tokens. Numerical coords in 3 decimals is enough.
@@ -392,7 +392,7 @@ WORKFLOW
    `logs/memory/MEMORY.md`,
    but the in-repo snapshot is the portable source of truth.)
    Scan all ~40 lines, then `Read` the 3-5 most relevant feedback_*.md
-   for your cell. For bowl→plate spatial tasks ALWAYS read:
+   for your cell. For bowl->plate spatial tasks ALWAYS read:
    - feedback_bowl_eef_y_offset.md (CRITICAL: bowl-eef y-offset 4.5cm,
      so place at eef_y = plate_y + 0.045, NOT plate_y directly).
    Other high-leverage memories:
@@ -505,9 +505,9 @@ KEY HYPERPARAMETERS
 - step_clip: 0.025 (empty gripper / flat boxes), 0.015 (cans),
   0.012 (tall bottles).
 - Frame matters. Check states.json[0].state.robot0_eef_pos[2]:
-    ≈ 0.68 → LIVING_ROOM (basket / plate / pudding scenes)
-    ≈ 1.17 → KITCHEN (stove / cabinet / drawer / microwave)
-    ≈ 0.26 → object scene (libero_object PRO)
+    ≈ 0.68 -> LIVING_ROOM (basket / plate / pudding scenes)
+    ≈ 1.17 -> KITCHEN (stove / cabinet / drawer / microwave)
+    ≈ 0.26 -> object scene (libero_object PRO)
 - BOWL: eef_y_target = plate_y + 0.045 (bowl-eef y-offset compensation)
 - TALL BOTTLES: carry z=0.30, release from carry without descending
 - CANS: set_gripper(+1, 8) between move stages

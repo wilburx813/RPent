@@ -113,7 +113,7 @@ class ClaudeCodeCerebrum:
             prompt_file = f.name
 
         try:
-            logger.info("prompt: %d chars → %s", len(full_prompt), prompt_file)
+            logger.info("prompt: %d chars -> %s", len(full_prompt), prompt_file)
             logger.info("workdir: %s", self._workdir)
             logger.info(
                 "invoking claude -p --model %s (timeout=%ds, budget=$%s)",
@@ -400,7 +400,7 @@ class _ClaudeCodeStreamRenderer:
                 payload_text = json.dumps(payload, ensure_ascii=False, default=str)
                 if len(payload_text) > 500:
                     payload_text = payload_text[:500] + f"...(+{len(payload_text) - 500})"
-                rendered.append(f"[tool→] {name}: {payload_text}\n")
+                rendered.append(f"[tool->] {name}: {payload_text}\n")
         return "".join(rendered)
 
     def _render_user_event(self, event: dict[str, Any]) -> str:
@@ -419,7 +419,7 @@ class _ClaudeCodeStreamRenderer:
                 tool_input=tool.get("input"),
                 tool_use_result=tool_result_meta,
             )
-            rendered.append(f"[tool←] {name}: {json.dumps(summary, ensure_ascii=False)}\n")
+            rendered.append(f"[tool<-] {name}: {json.dumps(summary, ensure_ascii=False)}\n")
         return "".join(rendered)
 
     def _render_result_event(self, event: dict[str, Any]) -> str:

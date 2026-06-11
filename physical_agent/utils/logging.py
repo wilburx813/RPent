@@ -21,9 +21,9 @@ import logging
 import sys
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Singleton state
-# ---------------------------------------------------------------------------
+# All loggers we configure live under this namespace so third-party
+# libraries (httpx, anthropic, urllib3, …) don't bleed into our output.
+_PKG_LOGGER_NAME = "physical_agent"
 
 _log_initialized = False
 _log_dir: Path | None = None
@@ -43,12 +43,36 @@ class _ColourFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         colour = self._COLOURS.get(record.levelno, "")
-        record.levelname = f"{colour}{record.levelname}{self._RESET}"
-        return super().format(record)
+        if not colour:
+            return super().format(record)
+        original = record.levelname
+        record.levelname = f"{colour}{original}{self._RESET}"
+        try:
+            return super().format(record)
+        finally:
+            record.levelname = original
+
+
+class _StripPkgPrefixFilter(logging.Filter):
+    """Strip the ``physical_agent.`` prefix from the logger name for display."""
+
+    _PREFIX = _PKG_LOGGER_NAME + "."
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name == _PKG_LOGGER_NAME:
+            record.name = "root"
+        elif record.name.startswith(self._PREFIX):
+            record.name = record.name[len(self._PREFIX):]
+        return True
 
 
 def init_run_logging(log_dir: str | Path | None = None) -> None:
     """Initialise the run logger.
+
+    Handlers are attached to the ``physical_agent`` package logger (not
+    the Python root logger), so only logs emitted via :func:`get_logger`
+    are captured.  Third-party libraries (httpx, anthropic, urllib3, …)
+    propagate to the unconfigured root logger and stay silent.
 
     Must be called once (typically at process start).  Subsequent calls
     are no-ops.
@@ -64,9 +88,12 @@ def init_run_logging(log_dir: str | Path | None = None) -> None:
     if _log_initialized:
         return
 
-    root = logging.getLogger()  # the Python root logger
-    root.setLevel(logging.DEBUG)
-    root.handlers.clear()
+    pkg_logger = logging.getLogger(_PKG_LOGGER_NAME)
+    pkg_logger.setLevel(logging.DEBUG)
+    pkg_logger.propagate = False
+    pkg_logger.handlers.clear()
+
+    strip_filter = _StripPkgPrefixFilter()
 
     # -- stdout handler (INFO and above) ----------------------------------
     stdout_handler = logging.StreamHandler(sys.stdout)
@@ -74,7 +101,8 @@ def init_run_logging(log_dir: str | Path | None = None) -> None:
     stdout_handler.setFormatter(
         _ColourFormatter("[%(name)s] %(message)s")
     )
-    root.addHandler(stdout_handler)
+    stdout_handler.addFilter(strip_filter)
+    pkg_logger.addHandler(stdout_handler)
 
     # -- file handler (DEBUG and above, timestamped) ---------------------
     if log_dir is not None:
@@ -90,17 +118,18 @@ def init_run_logging(log_dir: str | Path | None = None) -> None:
                 datefmt="%Y-%m-%d %H:%M:%S",
             )
         )
-        root.addHandler(file_handler)
+        file_handler.addFilter(strip_filter)
+        pkg_logger.addHandler(file_handler)
 
     _log_initialized = True
 
 
 def get_logger(name: str = "") -> logging.Logger:
-    """Return a logger with the given name.
+    """Return a logger namespaced under the ``physical_agent`` package.
 
-    The logger inherits handlers from the root logger configured by
-    ``init_run_logging``.  Passing an empty string returns the root
-    logger itself.
+    The returned logger inherits handlers from the package logger
+    configured by :func:`init_run_logging`.  Passing an empty string
+    returns the package logger itself.
 
     Typical usage::
 
@@ -112,8 +141,8 @@ def get_logger(name: str = "") -> logging.Logger:
         logger = get_logger("cerebrum.anthropic")
     """
     if name:
-        return logging.getLogger(name)
-    return logging.getLogger()
+        return logging.getLogger(f"{_PKG_LOGGER_NAME}.{name}")
+    return logging.getLogger(_PKG_LOGGER_NAME)
 
 
 def get_log_dir() -> Path | None:

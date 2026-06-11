@@ -184,7 +184,7 @@ Use waypoints. (Detail in env_calibration.md.)
 ### 3.3. Slow long-distance carry for swap variants
 
 If carrying an object across the table (e.g. P2 swap moves plate from
-y=0.19 back → y=0.04 front, a 15 cm y-traversal), `step_clip=0.025` lets
+y=0.19 back -> y=0.04 front, a 15 cm y-traversal), `step_clip=0.025` lets
 the object slip in the gripper. The bowl ends up centimetres off target.
 
 Mitigation (proven on `_swap` t0):
@@ -300,13 +300,13 @@ Cataloged so you don't redo:
 
 ```
 workspace_pro/
-├── PRO_HYBRID_GUIDE.md                 ← this file
-├── README.md                           ← patch overview
-├── env_calibration.md                  ← OSC frame bounds + safe altitudes
+├── PRO_HYBRID_GUIDE.md                 <- this file
+├── README.md                           <- patch overview
+├── env_calibration.md                  <- OSC frame bounds + safe altitudes
 ├── liberopro_register_perturbations.patch
 └── results_spatial_pert/
-    ├── REPORT_spatial_t0.md            ← Pi0 baseline vs hybrid table
-    ├── spatial_task_t0_s0.json         ← hybrid audits
+    ├── REPORT_spatial_t0.md            <- Pi0 baseline vs hybrid table
+    ├── spatial_task_t0_s0.json         <- hybrid audits
     ├── spatial_swap_t0_s0.json
     ├── spatial_lan_t0_s0.json
     ├── recipe_spatial_{task,swap,lan}_t0_s0.jsonl
@@ -344,7 +344,7 @@ only for t0**. That's the work that remains.
 # 1. Sanity-check liberopro patch present
 LIBERO_TYPE=pro python -c \
   "import liberopro.liberopro.benchmark as b; print(b.get_benchmark('libero_spatial_task')().get_task(0).language)"
-# → must read 'Pick the akita black bowl not between ...' (the perturbed text)
+# -> must read 'Pick the akita black bowl not between ...' (the perturbed text)
 
 # 2. Start a hybrid driver (background)
 cd ${PHYSICALAGENT_REPO_ROOT:-$(pwd)}

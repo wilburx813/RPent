@@ -180,7 +180,7 @@ class OpenAICompatibleCerebrum:
             arguments = function.get("arguments") or "{}"
             if len(arguments) > 250:
                 arguments = arguments[:250] + "...(+%d)" % (len(arguments) - 250)
-            logger.info("[tool→] %s(%s)", name, arguments)
+            logger.info("[tool->] %s(%s)", name, arguments)
         logger.info(
             "[usage] in=%s  out=%s  stop=%s  total_in=%s  total_out=%s",
             input_tokens, output_tokens, finish_reason, total_in, total_out,
@@ -215,7 +215,7 @@ class OpenAICompatibleCerebrum:
             s = json.dumps(summary, default=str)
             if len(s) > 350:
                 s = s[:350] + "...(+%d)" % (len(s) - 350)
-            logger.info("[tool←] %s: %s", name, s)
+            logger.info("[tool<-] %s: %s", name, s)
 
             tool_text, tool_image_blocks = _format_tool_result_for_openai(
                 result,

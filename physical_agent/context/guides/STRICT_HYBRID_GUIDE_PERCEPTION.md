@@ -27,7 +27,7 @@ How localization works (the core of this mode):
 1. `Read` `images_cam/image_cam_NN.png` — the agentview RGB **in the calibration frame**
    (vertical-flip of the raw buffer). This is the image you pick pixels in.
    `images/image_NN.png` is the Pi0-rotation frame; **do not use it for back-projection**.
-2. Find the target object visually → pixel `(row, col)`.
+2. Find the target object visually -> pixel `(row, col)`.
 3. Read the metric depth at that pixel from `depths/depth_NN.npy`.
 4. Back-project with `camera_meta.json`:
    `P_world = extrinsic_cam2world @ [col·z, row·z, z, 1]; z = depth[row,col]`.
@@ -54,7 +54,7 @@ Scan the ~40 one-line hooks. For perception cells **always** open:
   grasp early-cut / success validation — *localization* is perception-only,
   the *grasp* is not yet fully oracle-free).
 
-For bowl→plate spatial tasks always also read `feedback_bowl_eef_y_offset.md`
+For bowl->plate spatial tasks always also read `feedback_bowl_eef_y_offset.md`
 (bowl-eef y-offset 4.5 cm: place at `eef_y = plate_y + 0.045`, not `plate_y`).
 
 ## Rule 1 — `pi0_end_to_end` is FORBIDDEN
@@ -82,7 +82,7 @@ the camera matrices in `camera_meta.json`. Pick object pixels from this one.
 
 ## Rule 2 — Multi-episode iteration is allowed
 
-Same as oracle mode. A failed pick → re-pre-position, retry Pi0 with the
+Same as oracle mode. A failed pick -> re-pre-position, retry Pi0 with the
 next rung of the prompt ladder (see Rule 3). Reset between (task, seed)
 runs.
 
@@ -246,13 +246,13 @@ Write JSON to `{workdir}/command.json`. The full primitive set (this matches
 
 ## The strict-hybrid recipe (perception variant)
 
-A typical bowl→plate cell looks like:
+A typical bowl->plate cell looks like:
 
 1. Read `states.json[0]`, `images_cam/image_cam_00.png`, `camera_meta.json`.
 2. Identify the target object name from `task language` (the `obj_of_interest`
    key is often `null`; lean on `state.object_names` + the task instruction).
-3. Localize the target object — pixel in `images_cam/image_cam_00.png` → `depth[row,col]`
-   → back-project → world xyz.
+3. Localize the target object — pixel in `images_cam/image_cam_00.png` -> `depth[row,col]`
+   -> back-project -> world xyz.
 4. **Pre-position** above it: `move_to [obj_x, obj_y, carry_z]`, gripper open.
 5. `pi0_pick` with `track_obj=<obj_name>` and the right prompt (start with
    "pick up the {object}", escalate per Pi0 ladder — see below).
@@ -260,7 +260,7 @@ A typical bowl→plate cell looks like:
 7. Localize the placement region (basket / plate / drawer slot) the same way.
 8. `move_to [place_x, place_y, carry_z]` to traverse at constant height.
 9. Optionally descend `move_to [place_x, place_y, place_z]`.
-10. `release` — predicate (`On`/`In`) checks → `libero_terminated=True` if hit.
+10. `release` — predicate (`On`/`In`) checks -> `libero_terminated=True` if hit.
 11. Light retreat (`move_to` upward) so the next step's image is clean.
 
 > **Predicate fire timing.** Most LIBERO `On(X, Y)` predicates fire on
@@ -291,7 +291,7 @@ qualifier** for elevated picks (stove, cabinet-top, drawer). See
 - `track_obj_lift_thresh`: 0.05 (flat/stable) / 0.08 (slippery tall bottles).
 - `step_clip`: 0.025 (empty / box) / 0.015 (cans) / 0.012 (tall bottles).
 - Frame z (from `state.robot0_eef_pos[2]` at step 00):
-  ≈ 0.68 → LIVING_ROOM, ≈ 1.17 → KITCHEN, ≈ 0.26 → OBJECT.
+  ≈ 0.68 -> LIVING_ROOM, ≈ 1.17 -> KITCHEN, ≈ 0.26 -> OBJECT.
 - BOWL: `eef_y_target = perceived_plate_y + 0.045` (bowl-eef y-offset).
 - TALL BOTTLES: carry at `z=0.30`, release without descending.
 - Approach high-then-vertical; recover by re-`pi0_pick`, not by hovering.
@@ -299,9 +299,9 @@ qualifier** for elevated picks (stove, cabinet-top, drawer). See
 ## Reading state / log files
 
 After every command:
-1. `Read {workdir}/states.json` (jump to entry NN) → check `result.success`,
+1. `Read {workdir}/states.json` (jump to entry NN) -> check `result.success`,
    `final_dist_m`, `peak_lift_m`, eef pose, gripper width, `libero_terminated`.
-2. `Read {workdir}/images_cam/image_cam_NN.png` → visual confirmation;
+2. `Read {workdir}/images_cam/image_cam_NN.png` -> visual confirmation;
    pick pixels for any new localization.
 
 You **do not** open `depths/depth_NN.npy` interactively — feed it to the
@@ -316,7 +316,7 @@ localization snippet above.
   is no longer where you `release`d it. `release`, re-pre-pos above it,
   `pi0_pick` again, traverse again.
 - **OSC stuck.** `move_to` returns `final_dist_m > 0.05` at `max_steps` and
-  same xy twice → try `rotate_pitch`, split into more waypoints, or
+  same xy twice -> try `rotate_pitch`, split into more waypoints, or
   `move_pose` (co-varying) for cabinet-front singularity.
 - **Placement off because localization was wrong.** The release puts the
   object on bare table instead of on the plate. Re-`Read` the latest
@@ -386,7 +386,7 @@ failed. Stop.
 
 ## Reference cases from prior sessions
 
-- **libero_object PRO swap+task (200 cells, perception-isolated)** → 198/200
+- **libero_object PRO swap+task (200 cells, perception-isolated)** -> 198/200
   solved, 100% completed-cell solve, 0 honest failures. The pattern is
   consistent: localize-pre-pos-pi0_pick-set_gripper-move-release in 6–12
   commands per cell. See `multi_seed_exp/percep_object_*` for s0 recipes.

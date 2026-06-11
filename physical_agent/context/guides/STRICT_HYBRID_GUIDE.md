@@ -122,7 +122,7 @@ solved or shown solvable once someone stopped trusting the label:
   near-frictionless with no collision seat. The close was never impossible; pi0 just
   quits at visual-flush and OSC is rank-deficient at the cabinet-front singularity. It
   is now SOLVED by alternating `pi0_doubled` close with an OSC front-approach push.
-- **`libero_10 swap_t8` (mokas → relocated stove)** was declared "cook past Panda reach".
+- **`libero_10 swap_t8` (mokas -> relocated stove)** was declared "cook past Panda reach".
   The cook_region is actually a reachable BOX (the prior session measured the burner
   *body* xpos, not the predicate *site* box). Reach was never the barrier.
 
@@ -268,7 +268,7 @@ CUDA_VISIBLE_DEVICES=0 python \
 > libero_10 recipes are long-horizon (mean ~940, up to ~1600 env-steps);
 > 600 hits robosuite's per-episode cap mid-recipe and raises
 > `ValueError("executing action in terminated episode")`. Use 5000.
-> (spatial/object stay at 600 — short single pick→place.)
+> (spatial/object stay at 600 — short single pick->place.)
 > See `feedback_max_episode_steps_libero.md` + `results_10_pert/PATCH_NOTES.md`.
 
 Run this **in the background** (Bash `run_in_background: true`) so the harness
@@ -293,7 +293,7 @@ recipe is documented end-to-end).
 // === core (always available) =====================================
 
 // Scripted EEF servo. action_scale=0.05 is the env's units; step_clip caps
-// per-step Δxyz in metres BEFORE division by action_scale → smaller = slower.
+// per-step Δxyz in metres BEFORE division by action_scale -> smaller = slower.
 {"action": "move_to", "xyz": [x, y, z], "gripper": -1|+1,
  "tol": 0.012, "step_clip": 0.02, "max_steps": 80, "action_scale": 0.05,
  "target_yaw": null}                          // optional world-z yaw target
@@ -360,7 +360,7 @@ Per (task, seed):
    preventing Pi0 from continuing into a learned place trajectory.
 4. Read post-pick state. Compute bowl-eef offset.
 5. move_to(plate_xy - offset_xy, plate_z + half + margin - offset_z) keeping
-   gripper closed. Often needs 2-3 sub-stages: lift → travel → descend.
+   gripper closed. Often needs 2-3 sub-stages: lift -> travel -> descend.
 6. release(max_steps=25). Watch for libero_terminated=True in state JSON.
 7. **Always add a retreat step** — move_to a safe pose with gripper open,
    step_clip=0.02. See "Predicate fire timing" below.
@@ -381,9 +381,9 @@ Empirically observed fire points (libero_goal swap session, 2026-05-22):
 
 | Task | Fires during | Why |
 |---|---|---|
-| t1 swap (bowl→cook) | **retreat** | OSC stalled at z=1.20, bowl perched on gripper at z=1.17; only after retreat (gripper opens and moves away) did bowl fall the last 17 cm onto cook_region. |
-| t9 swap (wine→rack) | **descent** | The descent `move_to` itself put the bottle in contact with rack at z=1.15 → `On` satisfied mid-descent, before any release primitive ran. |
-| t2/t4 swap (→cabinet) | **release** | Standard case — release opens gripper, object drops a few cm onto cabinet top, predicate satisfied within `release`'s settle steps. |
+| t1 swap (bowl->cook) | **retreat** | OSC stalled at z=1.20, bowl perched on gripper at z=1.17; only after retreat (gripper opens and moves away) did bowl fall the last 17 cm onto cook_region. |
+| t9 swap (wine->rack) | **descent** | The descent `move_to` itself put the bottle in contact with rack at z=1.15 -> `On` satisfied mid-descent, before any release primitive ran. |
+| t2/t4 swap (->cabinet) | **release** | Standard case — release opens gripper, object drops a few cm onto cabinet top, predicate satisfied within `release`'s settle steps. |
 
 Two operational consequences:
 
@@ -470,7 +470,7 @@ points world -y. Sign verified empirically: `action[3]=+1.0` tilts eef z
 toward world +y.
 
 **When to use.**
-- **t9 mug → microwave**: `rotate_pitch +0.9` lets the gripper thread the
+- **t9 mug -> microwave**: `rotate_pitch +0.9` lets the gripper thread the
   cavity opening (mandatory for the In predicate).
 - Pouring-like motions where the eef needs to tilt forward.
 - Any cavity / shelf insertion task where 4-DoF (xyz + yaw) OSC can't fit
@@ -640,7 +640,7 @@ then scripted" note is a red flag in audit.
 
 ### Empirical evidence: `libero_10_lan t3` retry
 
-First pass used sub-instr `"pick up the black bowl"` → Pi0 ran 15 chunks
+First pass used sub-instr `"pick up the black bowl"` -> Pi0 ran 15 chunks
 with gripper open at end. We bailed to LLM-scripted pick (which also
 failed — bowl is thin, vertical grasp slides off), declared strict failure.
 
@@ -689,7 +689,7 @@ relax `track_obj_lift_thresh` (Pi0 may have lifted < your threshold).
   gripper)
 
 **Fix:** reset, retry with smaller `step_clip` (0.015), use multi-stage
-move (lift z high first → travel → descend).
+move (lift z high first -> travel -> descend).
 
 ### EEF stuck (OSC limits)
 - `move_result.final_dist_m > tol AND steps_used == max_steps`
@@ -727,7 +727,7 @@ scripted detour or be documented as a strict failure.
 - `chunks_used` much higher than expected (≥ 25 for a single pick) AND
   `state.objects.<target>_pos` already at the goal location
 
-**Fix:** lower `track_obj_lift_thresh` (e.g. 0.05 → 0.04) to interrupt
+**Fix:** lower `track_obj_lift_thresh` (e.g. 0.05 -> 0.04) to interrupt
 Pi0 earlier. Or pre-position EEF directly above target so Pi0 needs
 less descent before the trigger fires.
 
@@ -859,8 +859,8 @@ python - <<'PYEOF'
 import json, os
 WORKDIR = "$REPL_WORKDIR"
 OUTDIR  = "${PHYSICALAGENT_REPO_ROOT:-$(pwd)}/physical_agent/primitives/results_all_10"
-TASK_ID, SEED = 9, 0                                           # ← fill in
-REGIME = "strict"                                               # ← fill in ("strict" or "pi0_doubled" — Rule 1 forbids "pi0_end_to_end")
+TASK_ID, SEED = 9, 0                                           # <- fill in
+REGIME = "strict"                                               # <- fill in ("strict" or "pi0_doubled" — Rule 1 forbids "pi0_end_to_end")
 NOTES  = "OSC IK barrier at cavity entry; Pi0 full task prompt solved in 186 chunks"
 
 states = json.load(open(os.path.join(WORKDIR, "states.json")))
@@ -958,13 +958,13 @@ When something fails, try these in order:
 
 1. **Re-read state** — never assume objects are where you last left them.
 2. **Re-pre-position** — gripper open, EEF above object xy at safe z.
-3. **Tighten `tol`** for the failing move_to (0.02 → 0.008).
-4. **Reduce `step_clip`** if mid-translation slip (0.025 → 0.015).
-5. **Break move into stages**: lift in place → travel high → descend.
+3. **Tighten `tol`** for the failing move_to (0.02 -> 0.008).
+4. **Reduce `step_clip`** if mid-translation slip (0.025 -> 0.015).
+5. **Break move into stages**: lift in place -> travel high -> descend.
 6. **Adjust `track_obj_lift_thresh`** — lower if Pi0 going too far; higher if
    exiting before secure grasp.
-7. **Different prompt — walk the Rule 3 escalation ladder**: sub-instr →
-   full BDDL task language → spatial qualifier → reposition+reset. For
+7. **Different prompt — walk the Rule 3 escalation ladder**: sub-instr ->
+   full BDDL task language -> spatial qualifier -> reposition+reset. For
    `libero_10` cluttered scenes, **start from full task language**, not
    sub-instr. Lower pre-pos z (e.g. 0.65) constrains Pi0 spatially.
 8. **`reset` and try a fresh episode** if scene state has drifted irrecoverably
@@ -1007,21 +1007,21 @@ Cases that worked strict (use as templates):
 
 | Pattern | Example task | Key trick |
 |---|---|---|
-| Simple table pick → plate | libero_spatial t0 | Direct offset compensation |
+| Simple table pick -> plate | libero_spatial t0 | Direct offset compensation |
 | Bowl in closed drawer | libero_spatial t4 | `pick(..., track_obj=akita_black_bowl_1, lift_thresh=0.05)` with full prompt makes Pi0 open drawer, your track_obj cuts after lift |
 | Bowl on cabinet top | libero_spatial t9 | Same as above but track interrupts during ascent above cabinet |
-| Two objects → basket | libero_10 t0, t1, t7 | Slow step_clip=0.02, multi-stage move per pot |
-| Two objects → two plates | libero_10 t4 | Same; separate pick+place loops per mug |
+| Two objects -> basket | libero_10 t0, t1, t7 | Slow step_clip=0.02, multi-stage move per pot |
+| Two objects -> two plates | libero_10 t4 | Same; separate pick+place loops per mug |
 | Object into narrow cavity (In) | libero_10 t9 | `rotate_pitch +0.9` to thread cavity opening; `rotate_wrist +3.0` after release pushes object deeper + retreats. **Close(door) must be physical** (pi0_doubled "close the door" or OSC push) — no teleport (Rule 4); record strict_failure if unreachable |
 
 Cases that failed strict (next session, try these):
 
-- **libero_10 t8 (both moka → stove)**: ✅ **Solved 2026-05-19** with strict
+- **libero_10 t8 (both moka -> stove)**: ✅ **Solved 2026-05-19** with strict
   hybrid (Pi0 only for both picks, LLM for all moves/places). Key insight:
   the cook_region is a 15×15cm box centered at `(-0.050, -0.200)`. **Place
   the two pots at opposite corners, never one in the middle** — the first
   moka in center leaves no room for the second and they collide on release.
-  Working layout: moka_2 → back-left `(-0.091, -0.228)`, moka_1 → front-right
+  Working layout: moka_2 -> back-left `(-0.091, -0.228)`, moka_1 -> front-right
   `(-0.014, -0.155)`, ~11 cm apart. Slow descend to z=1.05 (step_clip=0.01)
   converged in 93 steps without OSC stall. See `videos/t8_v4_SUCCESS.mp4`.
 - **libero_10 t9 (mug in microwave + close door)**: In(mug, heating_region)
@@ -1073,7 +1073,7 @@ The recipe:
 // 2. Descend until EEF auto-stalls on the object (DO NOT force a low target).
 //    Aim eef_z = obj_z + 0.05 with small step_clip. Likely stops above target
 //    when fingers contact object. Read state — if eef_z > obj_z + 0.08, the
-//    EEF stopped early (something else blocking) → re-align xy and retry.
+//    EEF stopped early (something else blocking) -> re-align xy and retry.
 {"action": "move_to", "xyz": [obj_x, obj_y, obj_z+0.05], "gripper": -1,
  "tol": 0.008, "step_clip": 0.015, "max_steps": 60}
 
@@ -1082,8 +1082,8 @@ The recipe:
 {"action": "set_gripper", "gripper": 1, "steps": 15}
 
 // 4. Read state: gripper qpos sum should be ~0.03-0.06 (NOT ~0.0).
-//    If sum ≈ 0 → fingers touched (empty grasp) → re-position xy +/- 5mm and retry.
-//    If sum > 0.06 → gripper still partly open (didn't clamp) → repeat set_gripper.
+//    If sum ≈ 0 -> fingers touched (empty grasp) -> re-position xy +/- 5mm and retry.
+//    If sum > 0.06 -> gripper still partly open (didn't clamp) -> repeat set_gripper.
 
 // 5. Lift verify: move EEF up by 15cm; read state. obj_z should track eef_z
 //    within ±1cm (the offset_z observed at grasp time).
@@ -1215,7 +1215,7 @@ Cross-suite progress + non-obvious past failures:
 ### Workflow
 
 ```
-1. New (suite, task) → cat MEMORY.md, scan for relevant entries.
+1. New (suite, task) -> cat MEMORY.md, scan for relevant entries.
 2. Read the matching feedback_*.md / project_*.md files BEFORE starting.
 3. Apply the documented fix; don't rediscover.
 4. If you discover something new (took > 2 iterations to find): write
@@ -1226,7 +1226,7 @@ Cross-suite progress + non-obvious past failures:
 
 ```
 0. cat logs/memory/MEMORY.md
-   → scan one-line hooks; Read matching .md files for relevant fixes.
+   -> scan one-line hooks; Read matching .md files for relevant fixes.
 1. cd ${PHYSICALAGENT_REPO_ROOT:-$(pwd)}
 2. Bash run_in_background:true
      CUDA_VISIBLE_DEVICES=0 python \
@@ -1236,8 +1236,8 @@ Cross-suite progress + non-obvious past failures:
      until [ -f $REPL_WORKDIR/states.json ] && \
             [ -s $REPL_WORKDIR/states.json ]; do sleep 5; done
 4. Read states.json[0], images/image_00.png. Identify target objects + goal regions.
-5. Iterate: REPL command → next entry appended to states.json →
-            Read images/image_NN.png (Rule 0) → Read states.json[NN] → next command.
+5. Iterate: REPL command -> next entry appended to states.json ->
+            Read images/image_NN.png (Rule 0) -> Read states.json[NN] -> next command.
    Append each command to a recipe_tN_sM.jsonl scratch file as you go.
 6. For each pick:
      Write command.json (pi0_pick + track_obj)
@@ -1259,7 +1259,7 @@ Cross-suite progress + non-obvious past failures:
    push satisfies the predicate (e.g. drawer is_close needs qpos>0), record
    a strict_failure with the predicate decomposition.
 9. Audit: pick_term=False AND release_term=True (or close fires during the
-   physical push) → strict (or pi0_doubled if Pi0 did the contact skill).
+   physical push) -> strict (or pi0_doubled if Pi0 did the contact skill).
    If LLM placement misses, `reset` and run a FRESH episode with a
    different plan (multi-episode iteration is allowed and encouraged — see
    "Iteration heuristics"). Do NOT call Pi0 to finish the place: Rule 1
