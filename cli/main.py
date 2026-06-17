@@ -23,7 +23,6 @@ from physical_agent.utils.config import (
     get_openai_compat_api_key,
     get_openai_compat_base_url,
     get_openai_compat_model,
-    get_openai_compat_supports_images,
     get_repo_root,
 )
 
@@ -297,7 +296,6 @@ def build_cerebrum(
     max_tokens: int = 4096,
     perception: bool = False,
     thinking: bool = False,
-    openai_compat_supports_images: bool | None = None,
     claude_code_timeout_s: int | None = None,
     claude_code_max_budget_usd: float | None = None,
     codex_timeout_s: int | None = None,
@@ -339,15 +337,11 @@ def build_cerebrum(
         if base_url:
             client_kwargs["base_url"] = base_url
         client = openai.OpenAI(**client_kwargs)
-        supports_images = openai_compat_supports_images
-        if supports_images is None:
-            supports_images = get_openai_compat_supports_images()
         return ApiAgentLoop(
             adapter=OpenAICompatibleAdapter(
                 client=client,
                 model=model or get_openai_compat_model(),
                 max_tokens=max_tokens,
-                supports_images=supports_images,
                 thinking=thinking,
             )
         )
@@ -425,8 +419,6 @@ def _build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--cerebrum", default="anthropic",
                     choices=["anthropic", "openai_compat", "claude_code", "codex"],
                     help="LLM backend: anthropic | openai_compat | claude_code | codex.")
-    ap.add_argument("--openai_compat_no_images", action="store_true",
-                    help="Do not send tool-result images to an openai_compat model.")
     ap.add_argument("--thinking", action="store_true",
                     help="Enable extended thinking / reasoning for anthropic and "
                          "openai_compat backends (no-op for claude_code/codex).")
@@ -497,7 +489,6 @@ def main() -> int:
         max_tokens=args.max_tokens,
         perception=args.perception,
         thinking=args.thinking,
-        openai_compat_supports_images=not args.openai_compat_no_images,
         claude_code_timeout_s=args.claude_code_timeout_s,
         claude_code_max_budget_usd=args.claude_code_max_budget_usd,
         codex_timeout_s=args.codex_timeout_s,

@@ -30,14 +30,12 @@ class OpenAICompatibleAdapter:
         model: str,
         max_tokens: int = 4096,
         *,
-        supports_images: bool = True,
         thinking: bool = False,
         reasoning_effort: str = "xhigh",
     ):
         self._client = client
         self._model = model
         self._max_tokens = max_tokens
-        self._supports_images = supports_images
         self._thinking = bool(thinking)
         self._reasoning_effort = reasoning_effort
 
@@ -95,7 +93,6 @@ class OpenAICompatibleAdapter:
             tool_text, tool_image_blocks = format_tool_result_for_openai(
                 tool_result.result,
                 tool_result_formatter,
-                supports_images=self._supports_images,
                 tool_name=tool_result.name,
             )
             tool_messages.append({
@@ -222,7 +219,6 @@ def format_tool_result_for_openai(
     result: dict[str, Any],
     tool_result_formatter: Callable[[dict[str, Any]], list[dict[str, Any]]],
     *,
-    supports_images: bool,
     tool_name: str,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Convert Anthropic-style content blocks into OpenAI messages."""
@@ -230,7 +226,6 @@ def format_tool_result_for_openai(
     blocks = tool_result_formatter(formatter_input)
     text_parts: list[str] = []
     image_blocks: list[dict[str, Any]] = []
-    omitted_images = 0
 
     for block in blocks:
         block_type = _get(block, "type")
@@ -240,7 +235,7 @@ def format_tool_result_for_openai(
                 text_parts.append(str(text))
         elif block_type == "image":
             image_url = _image_block_to_url(block)
-            if supports_images and image_url:
+            if image_url:
                 image_blocks.extend([
                     {
                         "type": "text",
@@ -248,16 +243,8 @@ def format_tool_result_for_openai(
                     },
                     {"type": "image_url", "image_url": {"url": image_url}},
                 ])
-            else:
-                omitted_images += 1
         else:
             text_parts.append(json.dumps(_to_plain_data(block), default=str))
-
-    if omitted_images:
-        text_parts.append(
-            f"[{omitted_images} image result(s) omitted because this "
-            "OpenAI-compatible backend is configured without image support.]"
-        )
 
     text = "\n\n".join(part for part in text_parts if part)
     if not text:
