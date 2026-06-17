@@ -1,6 +1,6 @@
 Cell: suite={suite}  task={task}  seed={seed}  MODE=PERCEPTION-ISOLATED.
 
-The REPL driver is already running with --hide_object_coords. Its output
+The env server is already running with --hide_object_coords. Its output
 directory is {output_dir}. states.json (with step 0 entry) +
 images/image_00.png + images_cam/image_cam_00.png + depths/depth_00.npy +
 camera_meta.json are ready. Run `mcp_list_dir` to confirm.

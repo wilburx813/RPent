@@ -5,7 +5,7 @@ guide is everything you need to know to continue iterating on **strict** hybrid:
 
 > **Pi0.5 only does `pick` (the gripper grasp). The LLM (you) handles
 > everything else — motion planning (move_to), release, sequencing, retries,
-> sanity-checking — by writing JSON commands to a REPL driver process and
+> sanity-checking — by writing JSON commands to a server process and
 > reading state/image dumps.**
 
 ## Before you start: READ THE AUTO-MEMORY
@@ -241,8 +241,8 @@ in your plan or in the physics simulator's behavior.**
 1. **One Python process runs forever.** It loaded Pi0.5 (~90s, GPU mem ~6GB),
    built a single-env LIBERO sim, and is now blocked waiting for a command.
 2. **You write commands.** Each command is a JSON file at
-   `$REPL_OUTPUT_DIR/command.json`. The driver consumes it, runs one
-   primitive, appends a step entry to `$REPL_OUTPUT_DIR/states.json` (state
+   `$OUTPUT_DIR/command.json`. The driver consumes it, runs one
+   primitive, appends a step entry to `$OUTPUT_DIR/states.json` (state
    + command + result) and writes `images/image_NN.png`. Then it blocks
    for the next command.
 3. **You read state, decide next move, write next command. Repeat.**
@@ -254,10 +254,10 @@ freely `reset` to retry the same task.
 
 ```bash
 cd ${PHYSICALAGENT_REPO_ROOT:-$(pwd)}
-REPL_OUTPUT_DIR="${REPL_OUTPUT_DIR:-$(mktemp -d -t repl_driver.XXXXXX)}"
+OUTPUT_DIR="${OUTPUT_DIR:-$(mktemp -d -t env_server.XXXXXX)}"
 CUDA_VISIBLE_DEVICES=0 python \
-    physical_agent/backends/rlinf/repl_driver.py \
-    --output_dir "$REPL_OUTPUT_DIR" \
+    deployment/rlinf/env_server.py \
+    --output_dir "$OUTPUT_DIR" \
     --suite libero_10 --task <N> --seed 0 --max_episode_steps 5000
 ```
 
@@ -272,7 +272,7 @@ doesn't block. Then wait for `states.json` to exist as the readiness signal
 (~90s model load).
 
 ```bash
-until [ -f $REPL_OUTPUT_DIR/states.json ] && [ -s $REPL_OUTPUT_DIR/states.json ]; do sleep 5; done
+until [ -f $OUTPUT_DIR/states.json ] && [ -s $OUTPUT_DIR/states.json ]; do sleep 5; done
 ```
 
 Suites currently supported: `libero_spatial`, `libero_10`. Add more via
@@ -280,7 +280,7 @@ Suites currently supported: `libero_spatial`, `libero_10`. Add more via
 
 ## The command vocabulary
 
-Write JSON to `$REPL_OUTPUT_DIR/command.json`. Brief schemas below; the full
+Write JSON to `$OUTPUT_DIR/command.json`. Brief schemas below; the full
 **Extended primitives reference** section (later in this guide) explains
 when to use each, gotchas, failure trees, and worked examples (t9 strict
 recipe is documented end-to-end).
@@ -340,7 +340,7 @@ After each command, wait for the next entry to appear in states.json:
 
 ```bash
 N=<step_number>  # zero-indexed; first command after step 0 is N=1
-until python -c "import json,sys; sys.exit(0 if len(json.load(open('$REPL_OUTPUT_DIR/states.json')))>$N else 1)" 2>/dev/null; do sleep 1; done
+until python -c "import json,sys; sys.exit(0 if len(json.load(open('$OUTPUT_DIR/states.json')))>$N else 1)" 2>/dev/null; do sleep 1; done
 ```
 
 ## The strict-hybrid recipe
@@ -537,30 +537,13 @@ them. The only motion primitives are the OSC ones (`move_to`, `rotate_wrist`,
   an OSC `move_to` stalls on a target you believe is reachable —
   reset, look at `ik_diagnostics`, adjust knobs, try again.
 
-### File layout (reference)
-
-```
-physical_agent/primitives/
-├── primitives.py              # LiberoPrimitiveDriver — OSC move_to, pick,
-│                              # release, set_gripper, rotate_wrist, rotate_pitch.
-│                              # (Teleport methods removed — see Rule 4.)
-├── interactive_driver.py      # REPL — action handlers for the physics-only primitives.
-└── STRICT_HYBRID_GUIDE.md     # THIS FILE — full operating manual + Rules.
-
-rlinf/envs/libero/
-└── libero_env.py / venv.py    # env worker + OSC step dispatch. (The teleport
-                                 # module js_move_to.py and the js_move_to /
-                                 # articulate_to / set_object_pose pipe commands
-                                 # were deleted — see Rule 4 — NO TELEPORT.)
-```
-
 ## Reading state / log files
 
 ```bash
 python - <<'PY'
 import json, sys
 NN = 5  # step index
-states = json.load(open("$REPL_OUTPUT_DIR/states.json"))
+states = json.load(open("$OUTPUT_DIR/states.json"))
 d = states[NN]
 s = d['state']
 print('libero_term:', d['libero_terminated'])
@@ -570,7 +553,7 @@ for k, v in s['objects'].items(): print(f'  {k}: {v}')
 PY
 ```
 
-For images, use the Read tool on `$REPL_OUTPUT_DIR/images/image_<NN>.png`
+For images, use the Read tool on `$OUTPUT_DIR/images/image_<NN>.png`
 (Claude Code's Read tool renders PNGs).
 
 ## Hyperparameters that actually matter
@@ -732,7 +715,7 @@ less descent before the trigger fires.
 After each run, check the pick step entry in states.json:
 
 ```python
-states = json.load(open("$REPL_OUTPUT_DIR/states.json"))
+states = json.load(open("$OUTPUT_DIR/states.json"))
 pr = states[pick_step_idx]["result"]  # the pi0_pick step
 assert pr["libero_terminated"] == False, "Pi0 finished the task — violation!"
 assert pr["chunks_used"] < 25, "Pi0 ran too long; may have done place"
@@ -750,9 +733,9 @@ release triggered libero_term ⇒ LLM did the place**.
 
 ## Persisting successful runs as audit JSONs
 
-The REPL workflow is great for iteration but **leaves nothing reproducible
-behind once the driver exits** — `$REPL_OUTPUT_DIR/states.json` and the
-`images/` subdir live only until the next driver run wipes them. The
+The server workflow is great for iteration but **leaves nothing reproducible
+behind once the server exits** — `$OUTPUT_DIR/states.json` and the
+`images/` subdir live only until the next server run wipes them. The
 libero_spatial corpus at `results_all_spatial/tN_sM.json` is the gold
 standard: each file is a single self-contained record of one
 (task, seed) rollout that an auditor (or a future Claude) can read months
@@ -766,10 +749,10 @@ schema, plus an entry in `all_rows.json`.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ 1. REPL iterate (Rule 0 + command vocab + heuristics).          │
+│ 1. Tool command iterate (Rule 0 + command vocab + heuristics).  │
 │    Find a command sequence that gets libero_terminated=True.    │
 │    Write each command as a JSON line in a scratch file as you   │
-│    go, e.g. $REPL_OUTPUT_DIR/recipe_t<N>_s<M>.jsonl, so the     │
+│    go, e.g. $OUTPUT_DIR/recipe_t<N>_s<M>.jsonl, so the          │
 │    final recipe is captured cleanly (do NOT rely on memory).    │
 │                                                                 │
 │ 2. Confirm strict compliance via the asserts above.             │
@@ -848,12 +831,12 @@ extend the schema rather than collapse.
 
 ### Stitch helper
 
-Run this at the end of a successful REPL session, before issuing `exit`:
+Run this at the end of a successful session, before issuing `exit`:
 
 ```bash
 python - <<'PYEOF'
 import json, os
-OUTPUT_DIR = "$REPL_OUTPUT_DIR"
+OUTPUT_DIR = "$OUTPUT_DIR"
 OUTDIR  = "${PHYSICALAGENT_REPO_ROOT:-$(pwd)}/physical_agent/primitives/results_all_10"
 TASK_ID, SEED = 9, 0                                           # <- fill in
 REGIME = "strict"                                               # <- fill in ("strict" or "pi0_doubled" — Rule 1 forbids "pi0_end_to_end")
@@ -911,8 +894,8 @@ sequence (from `recipe_t<N>_s<M>.jsonl`) into a small Python module under
 ```python
 # strategies/t9_strict_attempt.py — example shell
 def commands_for(task_id, seed, state_00):
-    """Return a list of REPL command dicts that solve t9. Each dict is
-    exactly what you'd write to $REPL_OUTPUT_DIR/command.json."""
+    """Return a list of tool command dicts that solve t9. Each dict is
+    exactly what you'd write to $OUTPUT_DIR/command.json."""
     return [
         {"action": "start_recording"},
         {"action": "move_to", "xyz": [-0.020, -0.020, 1.10], "gripper": -1,
@@ -1193,7 +1176,7 @@ Control + transport tactics:
 - `feedback_render_skip_in_env_step.md` — env render toggle to lift the
   EGL command budget
 - `feedback_max_episode_steps_libero.md` — use
-  `--max_episode_steps 5000` for REPL sessions
+  `--max_episode_steps 5000` for sessions
 - `feedback_failure_forensics.md` — after 2 retries on the same plan,
   STOP tuning and `Read` the images
 - `feedback_workspace_bounds_clamp.md` — editing workspace bounds also
@@ -1226,13 +1209,13 @@ Cross-suite progress + non-obvious past failures:
 1. cd ${PHYSICALAGENT_REPO_ROOT:-$(pwd)}
 2. Bash run_in_background:true
      CUDA_VISIBLE_DEVICES=0 python \
-         physical_agent/backends/rlinf/repl_driver.py \
+         deployment/rlinf/env_server.py \
          --suite libero_10 --task <N> --seed 0 --max_episode_steps 5000
 3. Bash run_in_background:true (wait for states.json)
-     until [ -f $REPL_OUTPUT_DIR/states.json ] && \
-            [ -s $REPL_OUTPUT_DIR/states.json ]; do sleep 5; done
+     until [ -f $OUTPUT_DIR/states.json ] && \
+            [ -s $OUTPUT_DIR/states.json ]; do sleep 5; done
 4. Read states.json[0], images/image_00.png. Identify target objects + goal regions.
-5. Iterate: REPL command -> next entry appended to states.json ->
+5. Iterate: tool command -> next entry appended to states.json ->
             Read images/image_NN.png (Rule 0) -> Read states.json[NN] -> next command.
    Append each command to a recipe_tN_sM.jsonl scratch file as you go.
 6. For each pick:
@@ -1263,8 +1246,7 @@ Cross-suite progress + non-obvious past failures:
 10. **Persist**: run the stitch helper above to produce
      results_all_<suite>/tN_sM.json + update all_rows.json,
      set regime + strategy_notes correctly (`"strict"` or `"pi0_doubled"`
-     only — never `"pi0_end_to_end"`). Required: REPL files do NOT persist
-     past driver exit.
+     only — never `"pi0_end_to_end"`).
 11. Write exit. Move on to next task.
 12. **Memory write-back**: if you discovered a non-obvious fix or env
      quirk that took >2 iterations to diagnose, save it as

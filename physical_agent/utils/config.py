@@ -34,8 +34,8 @@ def get_memory_dir() -> Path:
     return get_repo_root() / "logs" / "memory"
 
 
-def get_repl_driver_script() -> Path:
-    return get_repo_root() / "deployment" / "rlinf" / "repl_driver.py"
+def get_env_server_script() -> Path:
+    return get_repo_root() / "deployment" / "rlinf" / "env_server.py"
 
 
 def get_vla_server_script() -> Path:

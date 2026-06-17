@@ -1,6 +1,6 @@
 Cell: suite={suite}  task={task}  seed={seed}.
 
-The REPL driver is already running. Its output directory is {output_dir}
+The env server is already running. Its output directory is {output_dir}
 (this is also the default for mcp_list_dir / view_driver_state and every
 primitive tool — move_to, pi0_pick, release, ...). states.json (with
 step 0 entry) + images/image_00.png are ready. Run `mcp_list_dir` to

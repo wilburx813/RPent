@@ -1,7 +1,7 @@
 """Prompt bundle for the LIBERO environment."""
 from __future__ import annotations
 
-from physical_agent.context.libero_prompts import (
+from physical_agent.context.prompt_base import (
     CLAUDE_CODE_PERCEPTION_PROMPT_TEMPLATE,
     CLAUDE_CODE_PROMPT_TEMPLATE,
     INITIAL_USER_TEMPLATE,

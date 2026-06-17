@@ -23,8 +23,6 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-# Auto-detect project paths: this file is at
-# <repo>/physical_agent/apps/runner.py
 from physical_agent.utils.config import (
     get_anthropic_api_key,
     get_anthropic_base_url,
@@ -36,7 +34,7 @@ from physical_agent.utils.config import (
     get_openai_compat_base_url,
     get_openai_compat_model,
     get_openai_compat_supports_images,
-    get_repl_driver_script,
+    get_env_server_script,
     get_repo_root,
     get_vla_server_script,
 )
@@ -121,7 +119,7 @@ def start_driver(
 
     cmd = [
         sys.executable,
-        driver_script or str(get_repl_driver_script()),
+        driver_script or str(get_env_server_script()),
         "--suite", suite,
         "--task", str(task),
         "--seed", str(seed),

@@ -124,16 +124,16 @@ prompt, `--hide_object_coords --always_render`, `CELL_TIMEOUT_S=1200`) and
 auto-routes `LIBERO_TYPE=pro` for `*_swap/_task/_lan` suites. Override any knob
 via env: `CUDA_DEVICE=2 MODEL=claude-opus-4-7 OUTPUT_DIR=/path bash run_perception_cell.sh …`.
 
-### Raw driver launch (if you want to drive the REPL yourself)
+### Raw driver launch (if you want to drive the server process yourself)
 
 ```bash
 cd ${PHYSICALAGENT_REPO_ROOT:-$(pwd)}
-REPL_OUTPUT_DIR="${REPL_OUTPUT_DIR:-$(mktemp -d -t repl_driver.XXXXXX)}"
+OUTPUT_DIR="${OUTPUT_DIR:-$(mktemp -d -t env_server.XXXXXX)}"
 CUDA_VISIBLE_DEVICES=0 LIBERO_TYPE=pro MUJOCO_GL=egl \
   python \
-    physical_agent/backends/rlinf/repl_driver.py \
+    deployment/rlinf/env_server.py \
     --suite libero_object_swap --task 0 --seed 0 \
-    --output_dir $REPL_OUTPUT_DIR \
+    --output_dir $OUTPUT_DIR \
     --max_episode_steps 600 \
     --hide_object_coords --always_render
 ```
@@ -151,7 +151,7 @@ suites; omit it (or set `standard`) for the base benchmark.
 Run in background; wait for readiness:
 
 ```bash
-until [ -f $REPL_OUTPUT_DIR/states.json ] && [ -s $REPL_OUTPUT_DIR/states.json ]; do sleep 5; done
+until [ -f $OUTPUT_DIR/states.json ] && [ -s $OUTPUT_DIR/states.json ]; do sleep 5; done
 ```
 
 ## The perception files you read each step
@@ -169,7 +169,7 @@ until [ -f $REPL_OUTPUT_DIR/states.json ] && [ -s $REPL_OUTPUT_DIR/states.json ]
 ```bash
 python - <<'PY'
 import json, numpy as np
-wd = "$REPL_OUTPUT_DIR"; step = "01"; row, col = ROW, COL   # <-- fill in
+wd = "$OUTPUT_DIR"; step = "01"; row, col = ROW, COL   # <-- fill in
 cm = json.load(open(f"{wd}/camera_meta.json"))
 E  = np.array(cm["extrinsic_cam2world"])
 depth = np.load(f"{wd}/depths/depth_{step}.npy")
@@ -326,7 +326,7 @@ localization snippet above.
 Before saving the audit, run this check on your recipe-so-far:
 
 ```bash
-python -c "import json,re; s=json.load(open('$REPL_OUTPUT_DIR/states.json')); bad=re.compile(r'set_object_pose|articulate_to|js_move_to|carry_object'); hits=[e['command'].get('action') for e in s if e.get('command') and bad.search(e['command'].get('action',''))]; print('TELEPORT — REJECTED' if hits else 'physics-only ✓')"
+python -c "import json,re; s=json.load(open('$OUTPUT_DIR/states.json')); bad=re.compile(r'set_object_pose|articulate_to|js_move_to|carry_object'); hits=[e['command'].get('action') for e in s if e.get('command') and bad.search(e['command'].get('action',''))]; print('TELEPORT — REJECTED' if hits else 'physics-only ✓')"
 ```
 
 ## Persisting successful runs as audit JSONs

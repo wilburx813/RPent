@@ -8,7 +8,7 @@ transports.
 
 This module is RLinf-agnostic: it consumes a minimal :class:`EnvInterface`
 + :class:`ModelInterface` protocol so the host process (currently
-``deployment/rlinf/repl_driver.py``) can wire in any provider.
+``deployment/rlinf/env_server.py``) can wire in any provider.
 
 The bottom of this module also exports a libero-specific ``TOOLS_SPEC`` /
 ``TOOL_HANDLERS`` pair that :mod:`physical_agent.envs.libero` contributes

@@ -1,1 +1,1 @@
-"""Markdown prompt bodies; loaded by physical_agent.context.libero_prompts."""
+"""Markdown prompt bodies; loaded by physical_agent.context.prompt_base."""

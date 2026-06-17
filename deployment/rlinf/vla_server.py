@@ -13,7 +13,7 @@ Endpoints:
   loaded; HTTP 503 otherwise). Useful for clients that start in parallel
   with the server.
 
-The server loads Pi0.5 once at startup (same path as ``repl_driver.main``
+The server loads Pi0.5 once at startup (same path as ``env_server.main``
 today) and serves until killed.
 """
 from __future__ import annotations

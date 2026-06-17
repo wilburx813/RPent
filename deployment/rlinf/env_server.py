@@ -8,7 +8,7 @@ locally and reaches in only for ``env.*`` method calls; the model side
 goes over HTTP to a separate ``deployment/rlinf/vla_server.py`` process
 (see :class:`~physical_agent.driver_client.vla_client.VLAClient`).
 
-Launched as a subprocess by :func:`physical_agent.apps.runner.start_driver`.
+Launched as a subprocess by :func:`cli.main.start_driver`.
 """
 from __future__ import annotations
 

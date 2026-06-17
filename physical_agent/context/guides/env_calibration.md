@@ -132,7 +132,7 @@ limit 1.15). My libero_10 t0 used z=0.95 for travel — safe and consistent.
 ## Calibration log files
 
 Raw probe logs are preserved in:
-- `$REPL_OUTPUT_DIR/states.json` (one step entry per command — the per-command
+- `$OUTPUT_DIR/states.json` (one step entry per command — the per-command
   audit; each entry has `command`, `result`, `state`, `elapsed_s`).
 - Only kept for the most recent driver session; reproduce by re-running
   the calibration with the snippet in the next section.
@@ -142,13 +142,13 @@ Raw probe logs are preserved in:
 ```bash
 cd ${PHYSICALAGENT_REPO_ROOT:-$(pwd)}
 LIBERO_TYPE=pro CUDA_VISIBLE_DEVICES=0 python \
-  physical_agent/backends/rlinf/repl_driver.py \
+  deployment/rlinf/env_server.py \
   --suite libero_10_with_mug --task 0 --seed 0 --max_episode_steps 5000 \
   --max_steps 80 &
 
 # wait for ready, then for each z in 0.65 .. 0.42:
 echo '{"action":"move_to","xyz":[-0.20, 0.10, 0.65],
        "gripper":-1,"tol":0.008,"step_clip":0.010,"max_steps":80}' \
-  > $REPL_OUTPUT_DIR/command.json
-# read $REPL_OUTPUT_DIR/states.json (entry NN) for final_eef_pos & final_dist_m
+  > $OUTPUT_DIR/command.json
+# read $OUTPUT_DIR/states.json (entry NN) for final_eef_pos & final_dist_m
 ```
