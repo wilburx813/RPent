@@ -33,9 +33,3 @@ def get_toolkit(name: str | None = None) -> Toolkit:
         raise ValueError(f"unknown env: {env_name!r}; known envs: {known}")
     module = import_module(module_name)
     return module.get_toolkit()
-
-
-def infer_env_from_suite(suite: str | None) -> str:
-    if suite and suite.startswith("libero_"):
-        return "libero"
-    return "libero"

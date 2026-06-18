@@ -10,7 +10,6 @@ no backend state of its own.
 from __future__ import annotations
 
 import asyncio
-import base64
 import dataclasses
 import json
 import tempfile
@@ -50,7 +49,6 @@ class ClaudeCodeCerebrum:
         transport_host: str = "127.0.0.1",
         transport_port: int = 0,
         vla_endpoint: str = "",
-        env_name: str = "libero",
         hide_object_coords: bool = False,
         video_path: str = "",
     ):
@@ -66,7 +64,6 @@ class ClaudeCodeCerebrum:
         self._transport_host = transport_host
         self._transport_port = int(transport_port)
         self._vla_endpoint = vla_endpoint
-        self._env_name = env_name
         self._hide_object_coords = bool(hide_object_coords)
         self._video_path = video_path
 

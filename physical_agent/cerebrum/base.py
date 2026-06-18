@@ -167,7 +167,6 @@ def build_cerebrum(
             output_path=Path(output_dir) / f"claude_{recipe_tag}.txt",
             transport_host=transport_host,
             transport_port=transport_port,
-            env_name=env_name,
             hide_object_coords=perception,
             video_path=str(Path(output_dir) / "episode.mp4"),
         )

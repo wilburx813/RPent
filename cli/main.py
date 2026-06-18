@@ -22,7 +22,6 @@ from physical_agent.cerebrum.base import build_cerebrum  # noqa: E402
 from physical_agent.envs.registry import (  # noqa: E402
     get_env_spec,
     get_toolkit,
-    infer_env_from_suite,
 )
 from physical_agent.driver_client import (  # noqa: E402
     create_driver_client,
@@ -269,8 +268,8 @@ def _build_argparser() -> argparse.ArgumentParser:
                     help="e.g. libero_object_task, libero_spatial_swap")
     ap.add_argument("--task", type=int, required=True)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--env", dest="env_name", default=None,
-                    help="Environment backend. Defaults to suite inference/libero.")
+    ap.add_argument("--env", dest="env_name", default="libero",
+                    help="Environment backend. Defaults to libero.")
     ap.add_argument("--model", default=None,
                     help="Model id. Defaults to the selected backend's model env var.")
     ap.add_argument("--max_turns", type=int, default=100)
@@ -326,7 +325,7 @@ def main() -> int:
     suite = args.suite
     task = args.task
     seed = args.seed
-    env_name = args.env_name or infer_env_from_suite(suite)
+    env_name = args.env_name
     toolkit = get_toolkit(env_name)
     env_spec = get_env_spec(env_name)
     prompt_bundle = env_spec.prompts
