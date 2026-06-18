@@ -3,26 +3,22 @@ from __future__ import annotations
 
 import copy
 import json
-import time
-from dataclasses import dataclass
 from typing import Any, Callable
 
-from physical_agent.cerebrum.adapters.base import ModelTurn, ToolCall, ToolResult
-from physical_agent.utils.logging import get_logger
-
-logger = get_logger("openai")
-
-
-@dataclass
-class OpenAICompatState:
-    messages: list[dict[str, Any]]
-    tools: list[dict[str, Any]]
+from physical_agent.cerebrum.adapters.base import (
+    ApiAdapter,
+    ConversationState,
+    ModelTurn,
+    ToolCall,
+    ToolResult,
+)
 
 
-class OpenAICompatibleAdapter:
+class OpenAICompatibleAdapter(ApiAdapter):
     """Adapter for OpenAI-compatible Chat Completions tool calling."""
 
     name = "OpenAI-compatible"
+    _LOGGER_NAME = "openai"
 
     def __init__(
         self,
@@ -33,11 +29,13 @@ class OpenAICompatibleAdapter:
         thinking: bool = False,
         reasoning_effort: str = "xhigh",
     ):
-        self._client = client
-        self._model = model
-        self._max_tokens = max_tokens
-        self._thinking = bool(thinking)
         self._reasoning_effort = reasoning_effort
+        super().__init__(
+            client=client,
+            model=model,
+            max_tokens=max_tokens,
+            thinking=thinking,
+        )
 
     def start(
         self,
@@ -45,21 +43,18 @@ class OpenAICompatibleAdapter:
         system_prompt: str,
         user_message: str,
         tools_spec: list[dict[str, Any]],
-    ) -> OpenAICompatState:
+    ) -> ConversationState:
         messages: list[dict[str, Any]] = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": user_message})
-        return OpenAICompatState(
+        return ConversationState(
             messages=messages,
             tools=anthropic_tools_to_openai_tools(tools_spec),
         )
 
-    def call(self, state: OpenAICompatState) -> ModelTurn | None:
-        response = self._call_with_retries(
-            tools=state.tools,
-            messages=state.messages,
-        )
+    def call(self, state: ConversationState) -> ModelTurn | None:
+        response = self._call_with_retries(state)
         if response is None:
             return None
 
@@ -78,12 +73,12 @@ class OpenAICompatibleAdapter:
             },
         )
 
-    def append_assistant(self, state: OpenAICompatState, turn: ModelTurn) -> None:
+    def append_assistant(self, state: ConversationState, turn: ModelTurn) -> None:
         state.messages.append(turn.assistant_payload)
 
     def append_tool_results(
         self,
-        state: OpenAICompatState,
+        state: ConversationState,
         tool_results: list[ToolResult],
         tool_result_formatter: Callable[[dict[str, Any]], list[dict[str, Any]]],
     ) -> None:
@@ -115,12 +110,6 @@ class OpenAICompatibleAdapter:
                 ],
             })
 
-    def messages(self, state: OpenAICompatState) -> list[dict[str, Any]]:
-        return state.messages
-
-    def is_normal_stop(self, turn: ModelTurn) -> bool:
-        return turn.stop_reason in ("stop", "end_turn", None)
-
     def log_model_turn(
         self,
         turn: ModelTurn,
@@ -130,7 +119,7 @@ class OpenAICompatibleAdapter:
         assistant_message = turn.assistant_payload
         content = assistant_message.get("content")
         if isinstance(content, str) and content.strip():
-            logger.info("[openai] %s", content.strip())
+            self._logger.info("[openai] %s", content.strip())
 
         message = _get(_first_choice(turn.raw_response), "message")
         reasoning_text = _get(message, "reasoning_content")
@@ -138,7 +127,7 @@ class OpenAICompatibleAdapter:
             text = reasoning_text.strip()
             if len(text) > 500:
                 text = text[:500] + "...(+%d)" % (len(text) - 500)
-            logger.info("[thinking] %s", text)
+            self._logger.info("[thinking] %s", text)
 
         for tool_call in assistant_message.get("tool_calls") or []:
             function = tool_call.get("function") or {}
@@ -146,9 +135,9 @@ class OpenAICompatibleAdapter:
             arguments = function.get("arguments") or "{}"
             if len(arguments) > 250:
                 arguments = arguments[:250] + "...(+%d)" % (len(arguments) - 250)
-            logger.info("[tool->] %s(%s)", name, arguments)
+            self._logger.info("[tool->] %s(%s)", name, arguments)
 
-        logger.info(
+        self._logger.info(
             "[usage] in=%s  out=%s  stop=%s  total_in=%s  total_out=%s",
             turn.usage.get("input_tokens", 0),
             turn.usage.get("output_tokens", 0),
@@ -157,47 +146,22 @@ class OpenAICompatibleAdapter:
             usage_totals.get("total_output_tokens", 0),
         )
 
-    def api_failure_error(self) -> str:
-        return "OpenAI-compatible API call failed after retries"
-
-    def _call_with_retries(
-        self,
-        *,
-        tools: list[dict[str, Any]],
-        messages: list[dict[str, Any]],
-    ):
-        last_err = None
+    def _do_call(self, state: ConversationState) -> Any:
         extra_kwargs: dict[str, Any] = {}
         if self._thinking:
             extra_kwargs["reasoning_effort"] = self._reasoning_effort
-        for outer in range(3):
-            try:
-                response = self._client.chat.completions.create(
-                    model=self._model,
-                    messages=messages,
-                    tools=tools,
-                    tool_choice="auto",
-                    max_tokens=self._max_tokens,
-                    **extra_kwargs,
-                )
-                # Some OpenAI-compatible gateways answer 200 with an empty
-                # body (no `choices`) when the upstream request fails. Treat that as
-                # a transient, retryable error instead of crashing the agent loop.
-                _first_choice(response)
-                return response
-            except Exception as e:  # noqa: BLE001 - SDK-compatible errors vary by provider.
-                last_err = e
-                if not _is_retryable_error(e):
-                    raise
-                wait = 10 * (outer + 1)
-                logger.warning(
-                    "API error '%s: %s' - sleeping %ds (retry %d/3)",
-                    type(e).__name__, e, wait, outer + 1,
-                )
-                time.sleep(wait)
-
-        logger.error("giving up after 3 retries; last error: %s", last_err)
-        return None
+        response = self._client.chat.completions.create(
+            model=self._model,
+            messages=state.messages,
+            tools=state.tools,
+            tool_choice="auto",
+            max_tokens=self._max_tokens,
+            **extra_kwargs,
+        )
+        # Some OpenAI-compatible gateways return 200 with no `choices` when the
+        # upstream request fails; surface that as a retryable KeyError.
+        _first_choice(response)
+        return response
 
 
 def anthropic_tools_to_openai_tools(
@@ -329,24 +293,6 @@ def _first_choice(response: Any) -> Any:
     if not choices:
         raise KeyError("OpenAI-compatible response did not include choices")
     return choices[0]
-
-
-def _is_retryable_error(error: Exception) -> bool:
-    name = type(error).__name__
-    if name in {
-        "APIConnectionError",
-        "APITimeoutError",
-        "InternalServerError",
-        "RateLimitError",
-        "Timeout",
-        "TimeoutException",
-        "KeyError",
-    }:
-        return True
-    status_code = getattr(error, "status_code", None)
-    return status_code in {408, 409, 429} or (
-        isinstance(status_code, int) and status_code >= 500
-    )
 
 
 def _get(obj: Any, key: str, default: Any = None) -> Any:

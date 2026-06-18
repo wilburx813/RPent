@@ -3,29 +3,24 @@ from __future__ import annotations
 
 import copy
 import json
-import time
-from dataclasses import dataclass
 from typing import Any, Callable
 
 import anthropic
 
-from physical_agent.cerebrum.adapters.base import ModelTurn, ToolCall, ToolResult
-from physical_agent.utils.logging import get_logger
-
-logger = get_logger("anthropic")
-
-
-@dataclass
-class AnthropicState:
-    system: str | list[dict[str, Any]]
-    tools: list[dict[str, Any]]
-    messages: list[dict[str, Any]]
+from physical_agent.cerebrum.adapters.base import (
+    ApiAdapter,
+    ConversationState,
+    ModelTurn,
+    ToolCall,
+    ToolResult,
+)
 
 
-class AnthropicAdapter:
+class AnthropicAdapter(ApiAdapter):
     """Adapter for Anthropic Messages API tool-use."""
 
     name = "Anthropic"
+    _LOGGER_NAME = "anthropic"
 
     def __init__(
         self,
@@ -36,18 +31,20 @@ class AnthropicAdapter:
         thinking: bool = False,
         thinking_budget_tokens: int = 4096,
     ):
-        self._client = client
-        self._model = model
-        self._thinking = bool(thinking)
         self._thinking_budget = int(thinking_budget_tokens)
-        if self._thinking and max_tokens <= self._thinking_budget:
+        super().__init__(
+            client=client,
+            model=model,
+            max_tokens=max_tokens,
+            thinking=thinking,
+        )
+        if self._thinking and self._max_tokens <= self._thinking_budget:
             new_max = self._thinking_budget + 1024
-            logger.warning(
+            self._logger.warning(
                 "max_tokens=%d <= thinking budget_tokens=%d; bumping max_tokens to %d",
-                max_tokens, self._thinking_budget, new_max,
+                self._max_tokens, self._thinking_budget, new_max,
             )
-            max_tokens = new_max
-        self._max_tokens = max_tokens
+            self._max_tokens = new_max
 
     def start(
         self,
@@ -55,19 +52,15 @@ class AnthropicAdapter:
         system_prompt: str,
         user_message: str,
         tools_spec: list[dict[str, Any]],
-    ) -> AnthropicState:
-        return AnthropicState(
-            system=_cacheable_system(system_prompt),
-            tools=_cacheable_tools(tools_spec),
+    ) -> ConversationState:
+        return ConversationState(
             messages=[{"role": "user", "content": user_message}],
+            tools=_cacheable_tools(tools_spec),
+            system=_cacheable_system(system_prompt),
         )
 
-    def call(self, state: AnthropicState) -> ModelTurn | None:
-        response = self._call_with_retries(
-            system=state.system,
-            tools=state.tools,
-            messages=state.messages,
-        )
+    def call(self, state: ConversationState) -> ModelTurn | None:
+        response = self._call_with_retries(state)
         if response is None:
             return None
 
@@ -89,12 +82,12 @@ class AnthropicAdapter:
             },
         )
 
-    def append_assistant(self, state: AnthropicState, turn: ModelTurn) -> None:
+    def append_assistant(self, state: ConversationState, turn: ModelTurn) -> None:
         state.messages.append({"role": "assistant", "content": turn.assistant_payload})
 
     def append_tool_results(
         self,
-        state: AnthropicState,
+        state: ConversationState,
         tool_results: list[ToolResult],
         tool_result_formatter: Callable[[dict[str, Any]], list[dict[str, Any]]],
     ) -> None:
@@ -107,12 +100,6 @@ class AnthropicAdapter:
             })
         state.messages.append({"role": "user", "content": content})
 
-    def messages(self, state: AnthropicState) -> list[dict[str, Any]]:
-        return state.messages
-
-    def is_normal_stop(self, turn: ModelTurn) -> bool:
-        return turn.stop_reason == "end_turn"
-
     def log_model_turn(
         self,
         turn: ModelTurn,
@@ -122,22 +109,22 @@ class AnthropicAdapter:
         for block in turn.assistant_payload:
             block_type = getattr(block, "type", None)
             if block_type == "text" and getattr(block, "text", "").strip():
-                logger.info("[claude] %s", block.text.strip())
+                self._logger.info("[claude] %s", block.text.strip())
             elif block_type == "thinking":
                 text = (getattr(block, "thinking", "") or "").strip()
                 if text:
                     if len(text) > 500:
                         text = text[:500] + "...(+%d)" % (len(text) - 500)
-                    logger.info("[thinking] %s", text)
+                    self._logger.info("[thinking] %s", text)
             elif block_type == "redacted_thinking":
-                logger.info("[thinking] <redacted>")
+                self._logger.info("[thinking] <redacted>")
             elif block_type == "tool_use":
                 s = json.dumps(getattr(block, "input", {}), default=str)
                 if len(s) > 250:
                     s = s[:250] + "...(+%d)" % (len(s) - 250)
-                logger.info("[tool->] %s(%s)", getattr(block, "name", "?"), s)
+                self._logger.info("[tool->] %s(%s)", getattr(block, "name", "?"), s)
 
-        logger.info(
+        self._logger.info(
             "[usage] in=%s cache_create=%s cache_read=%s out=%s stop=%s "
             "total_in=%s total_cache_create=%s total_cache_read=%s total_out=%s",
             turn.usage.get("input_tokens", 0),
@@ -151,48 +138,21 @@ class AnthropicAdapter:
             usage_totals.get("total_output_tokens", 0),
         )
 
-    def api_failure_error(self) -> str:
-        return "Anthropic API call failed after retries"
-
-    def _call_with_retries(
-        self,
-        *,
-        system: str | list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        messages: list[dict[str, Any]],
-    ):
-        last_err = None
+    def _do_call(self, state: ConversationState) -> Any:
         extra_kwargs: dict[str, Any] = {}
         if self._thinking:
             extra_kwargs["thinking"] = {
                 "type": "enabled",
                 "budget_tokens": self._thinking_budget,
             }
-        for outer in range(3):
-            try:
-                return self._client.messages.create(
-                    model=self._model,
-                    max_tokens=self._max_tokens,
-                    system=system,
-                    tools=tools,
-                    messages=messages,
-                    **extra_kwargs,
-                )
-            except (
-                anthropic.APIConnectionError,
-                anthropic.APITimeoutError,
-                anthropic.InternalServerError,
-                anthropic.RateLimitError,
-            ) as e:
-                last_err = e
-                wait = 10 * (outer + 1)
-                logger.warning(
-                    "API error '%s: %s' - sleeping %ds (retry %d/3)",
-                    type(e).__name__, e, wait, outer + 1,
-                )
-                time.sleep(wait)
-        logger.error("giving up after 3 retries; last error: %s", last_err)
-        return None
+        return self._client.messages.create(
+            model=self._model,
+            max_tokens=self._max_tokens,
+            system=state.system,
+            tools=state.tools,
+            messages=state.messages,
+            **extra_kwargs,
+        )
 
 
 def _extract_tool_calls(content: list[Any]) -> list[ToolCall]:
