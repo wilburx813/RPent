@@ -22,7 +22,7 @@ from typing import Any, Callable
 import claude_agent_sdk
 
 from physical_agent.cerebrum.base import CerebrumResult
-from physical_agent.envs.registry import get_env_spec
+from physical_agent.tools import create_toolkit
 from physical_agent.utils.config import get_repo_root
 from physical_agent.utils.logging import get_logger
 
@@ -193,7 +193,7 @@ class ClaudeCodeCerebrum:
             part for part in self._allowed_tools.replace(",", " ").split() if part
         ]
         builtins = [name for name in allowed if "__" not in name]
-        allowed.extend(get_env_spec(self._env_name).allowed_mcp_tool_names)
+        allowed.extend(create_toolkit(self._env_name).allowed_mcp_tool_names)
 
         return sdk.ClaudeAgentOptions(
             cwd=self._repo_root,
@@ -230,7 +230,7 @@ class ClaudeCodeCerebrum:
         from physical_agent.utils.logging import init_output_dir
 
         init_output_dir(self._output_dir)
-        get_env_spec(self._env_name).set_driver_client(
+        create_toolkit(self._env_name).set_driver_client(
             SocketDriverClient(self._transport_host, self._transport_port),
             model=VLAClient(self._vla_endpoint),
             hide_object_coords=self._hide_object_coords,
@@ -429,11 +429,9 @@ class _Recorder:
 
 
 def _build_physical_agent_server(sdk: Any, *, env_name: str) -> Any:
-    from physical_agent.tools import create_tool_registry
-
-    registry = create_tool_registry(env_name)
+    toolkit = create_toolkit(env_name)
     sdk_tools = []
-    for spec in registry.get_tools_spec():
+    for spec in toolkit.get_tools_spec():
         name = str(spec["name"])
         description = str(spec.get("description", ""))
         input_schema = spec.get("input_schema", {"type": "object"})
@@ -443,7 +441,7 @@ def _build_physical_agent_server(sdk: Any, *, env_name: str) -> Any:
             *,
             tool_name: str = name,
         ) -> dict[str, Any]:
-            return _tool_result_to_mcp(registry.execute_tool(tool_name, args or {}))
+            return _tool_result_to_mcp(toolkit.execute_tool(tool_name, args or {}))
 
         run_tool.__name__ = f"physical_agent_{name}"
         sdk_tools.append(sdk.tool(name, description, input_schema)(run_tool))

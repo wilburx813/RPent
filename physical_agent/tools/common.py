@@ -57,14 +57,14 @@ TOOLS_SPEC: list[dict] = [
     {
         "name": "mcp_list_dir",
         "description": (
-            "List files in a directory (non-recursive). Default = current output dir. "
+            "List files in a directory (non-recursive). Default = {output_dir}. "
             "Use to inspect the driver working directory or to discover existing "
             "recipes in workspace_pro/results_*_pert/."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Default: current output dir"},
+                "path": {"type": "string", "description": "Default: {output_dir}"},
             },
         },
     },
@@ -126,48 +126,6 @@ TOOL_HANDLERS: dict = {
     "write_text_file": write_text_file,
     "mcp_list_dir": mcp_list_dir,
 }
-
-
-# ---------------------------------------------------------------------------
-# Dispatcher
-# ---------------------------------------------------------------------------
-
-
-def bind_output_dir_descriptions(tools_spec: list[dict]) -> list[dict]:
-    """Return tool schemas with descriptions bound to the current output dir."""
-    tools = json.loads(json.dumps(tools_spec))
-    replacements = {
-        "current output dir": str(get_output_dir()),
-    }
-    for tool in tools:
-        desc = tool.get("description", "")
-        for old, new in replacements.items():
-            desc = desc.replace(old, new)
-        tool["description"] = desc
-        props = tool.get("input_schema", {}).get("properties", {})
-        for prop in props.values():
-            prop_desc = prop.get("description", "")
-            for old, new in replacements.items():
-                prop_desc = prop_desc.replace(old, new)
-            prop["description"] = prop_desc
-    return tools
-
-
-def get_tools_spec() -> list[dict]:
-    return bind_output_dir_descriptions(TOOLS_SPEC)
-
-
-def execute_tool(name: str, input_dict: dict) -> dict:
-    handler = TOOL_HANDLERS.get(name)
-    if handler is None:
-        return {"error": f"unknown tool: {name}"}
-    try:
-        return handler(**input_dict)
-    except TypeError as e:
-        return {"error": f"bad arguments for {name}: {e}", "got": input_dict}
-    except Exception as e:
-        import traceback
-        return {"error": str(e), "traceback": traceback.format_exc()}
 
 
 # ---------------------------------------------------------------------------

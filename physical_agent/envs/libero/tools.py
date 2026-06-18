@@ -1071,7 +1071,7 @@ TOOLS_SPEC = [
         "name": "view_driver_state",
         "description": (
             "Read step NN from `states.json` + the matching "
-            "`images/image_NN.png` in the current output dir. If step is "
+            "`images/image_NN.png` in {output_dir}. If step is "
             "null, returns the latest entry. Each entry contains the robot "
             "state, libero_terminated flag, command log, and result. Embeds "
             "the agentview PNG as a multimodal image content block (use this "

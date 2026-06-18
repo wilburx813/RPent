@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
 
 
 @dataclass(frozen=True)
@@ -54,12 +53,12 @@ class PromptBundle:
 
 @dataclass(frozen=True)
 class EnvSpec:
-    """Agent-facing extension points contributed by one environment."""
+    """Environment-level (non-tool) extension points for PhysicalAgent.
+
+    Tool schemas, handlers, driver lifecycle, and the MCP allowlist live on
+    :class:`physical_agent.tools.toolkit.Toolkit` (and env-specific
+    subclasses). ``EnvSpec`` carries only the env identity and prompt bundle.
+    """
 
     name: str
     prompts: PromptBundle
-    tools_spec: list[dict[str, Any]]
-    tool_handlers: dict[str, Callable[..., dict[str, Any]]]
-    set_driver_client: Callable[..., None]
-    stop_recording_and_save: Callable[[], None]
-    allowed_mcp_tool_names: tuple[str, ...] = ()

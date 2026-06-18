@@ -1,10 +1,10 @@
 """Agent tool declarations, handlers, and result serialization."""
 
 from physical_agent.tools.common import tool_result_to_content_blocks
-from physical_agent.tools.registry import ToolRegistry, create_tool_registry
+from physical_agent.tools.toolkit import Toolkit, create_toolkit
 
 __all__ = [
-    "ToolRegistry",
-    "create_tool_registry",
+    "Toolkit",
+    "create_toolkit",
     "tool_result_to_content_blocks",
 ]
