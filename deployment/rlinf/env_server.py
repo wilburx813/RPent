@@ -143,9 +143,14 @@ class LiberoEnvFacade:
     trip.
     """
 
-    def __init__(self, env: LiberoEnv):
+    def __init__(self, env: LiberoEnv, *, meta: dict):
         self._env = env
         self._env_idx = 0
+        self._done = False
+        # Identifies what task/seed this server was launched with — the
+        # client compares against its own expected values at construction
+        # and refuses to talk to a stale or mis-configured server.
+        self._meta = dict(meta)
 
     # ---- shape helpers ----
 
@@ -171,19 +176,34 @@ class LiberoEnvFacade:
         ``[chunk_size, action_dim]``."""
         return np.asarray(actions)[None]
 
+    def _record_done(self, *signals: Any) -> None:
+        """OR the truthiness of every termination/truncation signal into
+        ``self._done`` so subsequent step() calls short-circuit."""
+        for s in signals:
+            if np.asarray(s).any():
+                self._done = True
+                return
+
     # ---- gym-like surface ----
 
     def reset(self):
         obs, info = self._env.reset()
-        return self._strip_obs(_to_numpy_tree(obs)), _to_numpy_tree(info)
+        obs = self._strip_obs(_to_numpy_tree(obs))
+        self._done = False
+        return obs, _to_numpy_tree(info)
 
     def step(self, action):
+        assert not self._done, "step called after episode done"
         obs, rew, term, trunc, info = self._env.step(self._expand_action(action))
+        obs = self._strip_obs(_to_numpy_tree(obs))
+        term = self._strip(_to_numpy_tree(term))
+        trunc = self._strip(_to_numpy_tree(trunc))
+        self._record_done(term, trunc)
         return (
-            self._strip_obs(_to_numpy_tree(obs)),
+            obs,
             self._strip(_to_numpy_tree(rew)),
-            self._strip(_to_numpy_tree(term)),
-            self._strip(_to_numpy_tree(trunc)),
+            term,
+            trunc,
             _to_numpy_tree(info),
         )
 
@@ -199,21 +219,29 @@ class LiberoEnvFacade:
         the leading env dim is stripped — the agent reduces across the
         chunk itself.
         """
+        assert not self._done, "chunk_step called after episode done"
         obs_list, rew, term, trunc, info = self._env.chunk_step(
             self._expand_chunk(actions)
         )
         obs_list = [self._strip_obs(_to_numpy_tree(o)) for o in obs_list]
+        term = self._strip(_to_numpy_tree(term))
+        trunc = self._strip(_to_numpy_tree(trunc))
+        self._record_done(term, trunc)
         obs_field = obs_list if return_all_frames else obs_list[-1]
         return (
             obs_field,
             self._strip(_to_numpy_tree(rew)),
-            self._strip(_to_numpy_tree(term)),
-            self._strip(_to_numpy_tree(trunc)),
+            term,
+            trunc,
             _to_numpy_tree(info),
         )
 
     def raw_obs(self) -> dict:
         return _to_numpy_tree(self._env.current_raw_obs[self._env_idx])
+
+    def get_env_meta(self) -> dict:
+        """Return the meta info this server was launched with. """
+        return dict(self._meta)
 
     def render_agentview(self) -> np.ndarray:
         img = self._env.current_raw_obs[self._env_idx]["agentview_image"]
@@ -223,15 +251,11 @@ class LiberoEnvFacade:
         return np.ascontiguousarray(img[::-1, ::-1])
 
     def get_camera_meta(self) -> dict | None:
-        try:
-            return _to_numpy_tree(
-                self._env.get_camera_meta(
-                    camera_name="agentview", height=256, width=256
-                )
+        return _to_numpy_tree(
+            self._env.get_camera_meta(
+                camera_name="agentview", height=256, width=256
             )
-        except Exception as e:
-            logger.warning("get_camera_meta failed: %s", e)
-            return None
+        )
 
     def cached_image(self) -> np.ndarray | None:
         cached = getattr(self._env, "_cached_full_image", None)
@@ -276,7 +300,11 @@ def _build_dispatcher(env: LiberoEnvFacade,
     def dispatch(method: str, args: tuple, kwargs: dict):
         if method.startswith("env."):
             attr = method[len("env."):]
-            return getattr(env, attr)(*args, **kwargs)
+            try:
+                return getattr(env, attr)(*args, **kwargs)
+            except Exception as e:
+                logger.warning("run method %s failed: %s", method, e)
+                raise e
         if method == "shutdown":
             shutdown_event.set()
             return {"ok": True}
@@ -310,7 +338,15 @@ def main():
 
     raw_env = make_env(args.task, args.seed, suite_name=args.suite,
                        max_episode_steps=args.max_episode_steps)
-    env_facade = LiberoEnvFacade(raw_env)
+    env_facade = LiberoEnvFacade(
+        raw_env,
+        meta={
+            "suite": args.suite,
+            "task": args.task,
+            "seed": args.seed,
+            "max_episode_steps": args.max_episode_steps,
+        },
+    )
 
     shutdown_event = threading.Event()
     dispatch = _build_dispatcher(env_facade, shutdown_event)

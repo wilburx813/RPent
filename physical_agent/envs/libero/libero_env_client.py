@@ -29,18 +29,42 @@ class LiberoEnvClient:
         self,
         client: RpcClient,
         *,
+        expected_meta: dict,
         return_all_frames: bool = False,
     ):
         self._client = client
         self.return_all_frames = return_all_frames
+        self.episode_done = False
+        server_meta = self._client.call(
+            "env.get_env_meta", timeout_s=_TIMEOUT_S["default"]
+        )
+        assert server_meta == expected_meta, (
+            f"env_meta mismatch: expected={expected_meta!r} "
+            f"actual={server_meta!r}. The env_server was launched with "
+            "different args than this client expects — kill the stale "
+            "env_server and relaunch."
+        )
+        self.reset()
+
+    def check_done(self, term, trunc) -> None:
+        if np.asarray(term).any() or np.asarray(trunc).any():
+            self.episode_done = True
 
     def reset(self) -> tuple[dict, Any]:
-        return self._client.call("env.reset", timeout_s=_TIMEOUT_S["env.reset"])
+        ret = self._client.call("env.reset", timeout_s=_TIMEOUT_S["env.reset"])
+        self.episode_done = False
+        return ret
 
     def step(self, action) -> tuple[dict, Any, np.ndarray, Any, Any]:
-        return self._client.call(
+        assert not self.episode_done, (
+            "env.step called after the episode signaled term/trunc"
+        )
+        ret = self._client.call(
             "env.step", args=(action,), timeout_s=_TIMEOUT_S["env.step"]
         )
+        _, _, term, trunc, _ = ret
+        self.check_done(term, trunc)
+        return ret
 
     def chunk_step(self, actions) -> tuple[Any, Any, Any, Any, Any]:
         """Run an action chunk in one RPC. Returns the 5-positional tuple
@@ -48,15 +72,21 @@ class LiberoEnvClient:
 
         ``obs`` is ``list[Obs]`` when ``self.return_all_frames`` is True
         (one entry per chunk step), otherwise the final ``Obs`` dict.
-        Terminated / truncated retain their ``[num_envs, chunk_size]``
-        shape — callers reduce per-env-idx themselves.
+        Terminated / truncated have shape ``[chunk_size]`` after the
+        server strips the env dim.
         """
-        return self._client.call(
+        assert not self.episode_done, (
+            "env.chunk_step called after the episode signaled term/trunc"
+        )
+        ret = self._client.call(
             "env.chunk_step",
             args=(actions,),
             kwargs={"return_all_frames": self.return_all_frames},
             timeout_s=_TIMEOUT_S["env.chunk_step"],
         )
+        _, _, term, trunc, _ = ret
+        self.check_done(term, trunc)
+        return ret
 
     def raw_obs(self) -> dict:
         return self._client.call("env.raw_obs", timeout_s=_TIMEOUT_S["default"])

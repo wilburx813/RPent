@@ -100,22 +100,20 @@ def build_cerebrum(
     """Build a cerebrum for the given backend, resolving credentials from env vars."""
     # Imports are deferred to avoid a circular import: api_loop / claude_code /
     # codex all import from this module (CerebrumResult).
-    from physical_agent.cerebrum.adapters.anthropic import AnthropicAdapter
-    from physical_agent.cerebrum.adapters.openai_compat import (
-        OpenAICompatibleAdapter,
-    )
-    from physical_agent.cerebrum.api_loop import ApiAgentLoop
-    from physical_agent.cerebrum.claude_code import ClaudeCodeCerebrum
-    from physical_agent.cerebrum.codex import CodexCerebrum
 
     if cerebrum_type == "anthropic":
+        import anthropic
+        from physical_agent.cerebrum.adapters.anthropic import AnthropicAdapter
+        from physical_agent.cerebrum.adapters.openai_compat import (
+            OpenAICompatibleAdapter,
+        )
+        from physical_agent.cerebrum.api_loop import ApiAgentLoop
         api_key = api_key or get_anthropic_api_key()
         base_url = base_url or get_anthropic_base_url()
         if not api_key:
             raise ValueError(
                 "ANTHROPIC_API_KEY env var or --api_key must be set"
             )
-        import anthropic
         client = anthropic.Anthropic(
             api_key=api_key,
             max_retries=8,
@@ -131,13 +129,17 @@ def build_cerebrum(
             )
         )
     if cerebrum_type == "openai_compat":
+        import openai
+        from physical_agent.cerebrum.adapters.openai_compat import (
+            OpenAICompatibleAdapter,
+        )
+        from physical_agent.cerebrum.api_loop import ApiAgentLoop
         api_key = api_key or get_openai_compat_api_key()
         base_url = base_url or get_openai_compat_base_url()
         if not api_key:
             raise ValueError(
                 "OPENAI_COMPAT_API_KEY or OPENAI_API_KEY or --api_key must be set"
             )
-        import openai
         client_kwargs = {"api_key": api_key, "max_retries": 0, "timeout": 120.0}
         if base_url:
             client_kwargs["base_url"] = base_url
@@ -151,6 +153,7 @@ def build_cerebrum(
             )
         )
     if cerebrum_type == "claude_code":
+        from physical_agent.cerebrum.claude_code import ClaudeCodeCerebrum
         cc_timeout_s = claude_code_timeout_s
         if cc_timeout_s is None:
             cc_timeout_s = int(os.environ.get("CELL_TIMEOUT_S", "1200" if perception else "600"))
@@ -169,6 +172,7 @@ def build_cerebrum(
             video_path=str(Path(output_dir) / "episode.mp4"),
         )
     if cerebrum_type == "codex":
+        from physical_agent.cerebrum.codex import CodexCerebrum
         cx_timeout_s = codex_timeout_s
         if cx_timeout_s is None:
             cx_timeout_s = int(os.environ.get(

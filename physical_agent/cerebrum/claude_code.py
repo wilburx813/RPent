@@ -18,8 +18,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import claude_agent_sdk
-
 from physical_agent.cerebrum.base import CerebrumResult
 from physical_agent.tools.toolkit import Toolkit
 from physical_agent.utils.config import get_repo_root
@@ -88,6 +86,7 @@ class ClaudeCodeCerebrum:
         toolkit: Toolkit,
         max_turns: int,
     ) -> CerebrumResult:
+        import claude_agent_sdk
         sdk = claude_agent_sdk
         if self._output_path is None:
             with tempfile.NamedTemporaryFile(

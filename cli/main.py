@@ -95,7 +95,7 @@ def start_env_server(
     logger.info("env server cmd: %s", ' '.join(cmd))
     logger.info("env server log: %s", log_path)
     logger.info("CUDA_VISIBLE_DEVICES=%s  output_dir=%s", cuda_device, out_dir)
-    log_f = open(log_path, "w")
+    log_f = open(log_path, "a")
     ready_events: queue.Queue[dict] = queue.Queue()
     proc = subprocess.Popen(
         cmd,
@@ -189,7 +189,7 @@ def start_vla_server(
     ]
     logger.info("vla_server cmd: %s", " ".join(cmd))
     if log_path:
-        log_f = open(log_path, "w")
+        log_f = open(log_path, "a")
         proc = subprocess.Popen(cmd, stdout=log_f, stderr=subprocess.STDOUT, env=env)
     else:
         proc = subprocess.Popen(cmd, env=env)
@@ -422,7 +422,15 @@ def main() -> int:
         toolkit = get_toolkit(
             env_name,
             primitives_kwargs={
-                "env": LiberoEnvClient(create_rpc_client(output_dir)),
+                "env": LiberoEnvClient(
+                    create_rpc_client(output_dir),
+                    expected_meta={
+                        "suite": suite,
+                        "task": task,
+                        "seed": seed,
+                        "max_episode_steps": max_episode_steps,
+                    },
+                ),
                 "model": VLAClient(vla_endpoint),
                 "hide_object_coords": args.perception,
             },
@@ -444,7 +452,15 @@ def main() -> int:
         toolkit = get_toolkit(
             env_name,
             primitives_kwargs={
-                "env": LiberoEnvClient(create_rpc_client(output_dir)),
+                "env": LiberoEnvClient(
+                    create_rpc_client(output_dir),
+                    expected_meta={
+                        "suite": suite,
+                        "task": task,
+                        "seed": seed,
+                        "max_episode_steps": max_episode_steps,
+                    },
+                ),
                 "model": VLAClient(vla_endpoint),
                 "hide_object_coords": args.perception,
             },
@@ -469,6 +485,9 @@ def main() -> int:
         logger.error("EXCEPTION in agent loop: %s", e)
     finally:
         # Agent-side: flush the episode video before the env+model
+        recipe_path = toolkit.write_recipe(recipe_tag)
+        logger.info("recipe: %s", recipe_path)
+
         toolkit.close()
         if env_proc is not None:
             stop_env_server(env_proc, output_dir=output_dir)
@@ -476,9 +495,6 @@ def main() -> int:
             stop_vla_server(vla_proc)
 
     elapsed = time.time() - t0
-
-    recipe_path = toolkit.write_recipe(recipe_tag)
-    logger.info("recipe: %s", recipe_path)
 
     transcript_path = Path(output_dir) / f"transcript_{recipe_tag}.json"
     record = {
@@ -488,7 +504,7 @@ def main() -> int:
         "stats": stats,
         "messages": _serialize_messages(messages),
     }
-    with open(transcript_path, "w") as f:
+    with open(transcript_path, "a") as f:
         json.dump(record, f, indent=2, default=str)
 
     logger.info("elapsed: %.1fs", elapsed)

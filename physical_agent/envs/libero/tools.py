@@ -49,7 +49,6 @@ class LiberoPrimitives:
         self._last_obs_eef_pos = None
         self._last_obs_eef_z = None
         self._last_obs_gripper = None
-        self._libero_terminated = False
         # Per-env-step frame buffer for diagnostic video rendering.
         # Toggled via start_recording() / stop_recording_and_save().
         self._recording = False
@@ -89,7 +88,6 @@ class LiberoPrimitives:
     def reset(self):
         obs, info = self.env.reset()
         self.set_obs(obs)
-        self._libero_terminated = False
         return self._last_obs, info
 
     def _vlm_chunk(self, instruction: str):
@@ -103,15 +101,11 @@ class LiberoPrimitives:
         # actions: [chunk_size, action_dim] The whole chunk
         # runs in a single env.chunk_step RPC; the env owns the per-step
         # loop server-side.
-        chunk_obs,  _r, chunk_term, _t, _i = self.env.chunk_step(actions)
+        chunk_obs,  _r, _t, _tr, _i = self.env.chunk_step(actions)
         obs = chunk_obs[-1] if self.env.return_all_frames else chunk_obs
         self.set_obs(obs)
-        # term shape is [chunk_size]; reduce over the chunk dim.
-        any_term = bool(np.asarray(chunk_term).any())
         # One frame per chunk (matches the previous chunk_step cadence).
         self.record_frame()
-        if any_term:
-            self._libero_terminated = True
         # Restore original task_descriptions on the obs dict for fairness
         # with future steps (no leaked state if caller switches primitives).
         if original_td is not None:
@@ -184,7 +178,7 @@ class LiberoPrimitives:
                 if (obj_z - track_obj_init_z) >= track_obj_lift_thresh:
                     success = True
                     break
-            if self._libero_terminated:
+            if self.env.episode_done:
                 success = True
                 break
 
@@ -197,7 +191,7 @@ class LiberoPrimitives:
             "peak_lift_m": post_min_peak_z - min_z,  # actual post-descent ascent
             "min_gripper_opening": min_grip,
             "final_gripper_opening": last_grip,
-            "libero_terminated": self._libero_terminated,
+            "libero_terminated": self.env.episode_done,
             "diagnostics": {
                 "start_eef_z": round(start_z, 4),
                 "peak_eef_z": round(peak_z, 4),
@@ -242,7 +236,7 @@ class LiberoPrimitives:
             if grip >= release_thresh:
                 success = True
                 break
-            if self._libero_terminated:
+            if self.env.episode_done:
                 success = True
                 break
 
@@ -255,7 +249,7 @@ class LiberoPrimitives:
             "peak_lift_m": peak_z - start_z,
             "min_gripper_opening": min_grip,
             "final_gripper_opening": last_grip,
-            "libero_terminated": self._libero_terminated,
+            "libero_terminated": self.env.episode_done,
             "diagnostics": {"release_thresh": release_thresh},
         }
 
@@ -309,11 +303,10 @@ class LiberoPrimitives:
                 step_dyaw = float(np.clip(err, -yaw_step_clip, yaw_step_clip))
                 action[5] = float(np.clip(step_dyaw / 0.10, -1.0, 1.0))
             action[6] = gripper
-            obs, _r, term, _t, _i = self.env.step(action)
+            obs, _r, _t, _tr, _i = self.env.step(action)
             self.set_obs(obs)
             self.record_frame()
-            if bool(np.asarray(term)):
-                self._libero_terminated = True
+            if self.env.episode_done:
                 break
         final = self._last_obs_eef_pos
         return {
@@ -323,7 +316,7 @@ class LiberoPrimitives:
             "final_dist_m": round(float(np.linalg.norm(target - final)), 4),
             "steps_used": len(traj),
             "max_steps": max_steps,
-            "libero_terminated": self._libero_terminated,
+            "libero_terminated": self.env.episode_done,
         }
 
     def rotate_wrist(
@@ -385,11 +378,10 @@ class LiberoPrimitives:
             action[5] = step_dyaw / 0.10  # scale to ~[-1,1] action range
             action[5] = float(np.clip(action[5], -1.0, 1.0))
             action[6] = float(gripper)
-            obs, _r, term, _t, _i = self.env.step(action)
+            obs, _r, _t, _tr, _i = self.env.step(action)
             self.set_obs(obs)
             self.record_frame()
-            if bool(np.asarray(term)):
-                self._libero_terminated = True
+            if self.env.episode_done:
                 break
         final_yaw = _yaw_of(self.env.raw_obs()["robot0_eef_quat"])
         return {
@@ -399,7 +391,7 @@ class LiberoPrimitives:
             "final_yaw": round(final_yaw, 4),
             "final_err": round(float((target_yaw - final_yaw + np.pi) % (2 * np.pi) - np.pi), 4),
             "steps_used": len(traj),
-            "libero_terminated": self._libero_terminated,
+            "libero_terminated": self.env.episode_done,
         }
 
     def rotate_pitch(
@@ -468,11 +460,10 @@ class LiberoPrimitives:
             action[3] = step_dpitch / 0.10
             action[3] = float(np.clip(action[3], -1.0, 1.0))
             action[6] = float(gripper)
-            obs, _r, term, _t, _i = self.env.step(action)
+            obs, _r, _t, _tr, _i = self.env.step(action)
             self.set_obs(obs)
             self.record_frame()
-            if bool(np.asarray(term)):
-                self._libero_terminated = True
+            if self.env.episode_done:
                 break
         final_pitch = _pitch_of(self.env.raw_obs()["robot0_eef_quat"])
         return {
@@ -483,7 +474,7 @@ class LiberoPrimitives:
             "final_err": round(float(
                 (target_pitch - final_pitch + np.pi) % (2 * np.pi) - np.pi), 4),
             "steps_used": len(traj),
-            "libero_terminated": self._libero_terminated,
+            "libero_terminated": self.env.episode_done,
         }
 
     def move_pose(
@@ -542,11 +533,10 @@ class LiberoPrimitives:
             action[3] = float(np.clip(np.clip(p_err, -pitch_step, pitch_step) / 0.10, -1.0, 1.0))
             action[5] = float(np.clip(np.clip(y_err, -yaw_step, yaw_step) / 0.10, -1.0, 1.0))
             action[6] = float(gripper)
-            obs, _r, term, _t, _i = self.env.step(action)
+            obs, _r, _t, _tr, _i = self.env.step(action)
             self.set_obs(obs)
             self.record_frame()
-            if bool(np.asarray(term)):
-                self._libero_terminated = True
+            if self.env.episode_done:
                 break
         final = self._last_obs_eef_pos
         fq = self.env.raw_obs()["robot0_eef_quat"]
@@ -556,7 +546,7 @@ class LiberoPrimitives:
             "final_dist_m": round(float(np.linalg.norm(target - final)), 4),
             "final_pitch": round(_pitch_of(fq), 4),
             "steps_used": step + 1,
-            "libero_terminated": self._libero_terminated,
+            "libero_terminated": self.env.episode_done,
         }
 
     def release(
@@ -574,12 +564,11 @@ class LiberoPrimitives:
         for step in range(max_steps):
             action = np.zeros(7, dtype=np.float32)
             action[6] = -1.0  # open
-            obs, _r, term, _t, _i = self.env.step(action)
+            obs, _r, _t, _tr, _i = self.env.step(action)
             self.set_obs(obs)
             self.record_frame()
             peak_grip = max(peak_grip, self._last_obs_gripper)
-            if bool(np.asarray(term)):
-                self._libero_terminated = True
+            if self.env.episode_done:
                 break
         return {
             "name": "release",
@@ -587,7 +576,7 @@ class LiberoPrimitives:
             "start_gripper_opening": round(start_grip, 4),
             "peak_gripper_opening": round(peak_grip, 4),
             "final_gripper_opening": round(self._last_obs_gripper, 4),
-            "libero_terminated": self._libero_terminated,
+            "libero_terminated": self.env.episode_done,
         }
 
     def set_gripper(
@@ -602,16 +591,16 @@ class LiberoPrimitives:
         for _ in range(n):
             action = np.zeros(7, dtype=np.float32)
             action[6] = g
-            obs, _r, term, _t, _i = self.env.step(action)
+            obs, _r, _t, _tr, _i = self.env.step(action)
             self.set_obs(obs)
             self.record_frame()
-            if bool(np.asarray(term)):
-                self._libero_terminated = True
+            if self.env.episode_done:
+                break
         return {
             "name": "set_gripper",
             "gripper": g,
             "steps": n,
-            "libero_terminated": self._libero_terminated,
+            "libero_terminated": self.env.episode_done,
         }
 
     # ---- introspection helpers (for LLM-in-the-loop) ----
@@ -659,13 +648,12 @@ class LiberoPrimitives:
             # _vlm_chunk overrides prompt; but we want the ORIGINAL. Bypass.
             self._last_obs.setdefault("extra_view_images", None)
             actions, _ = self.model.predict_action_batch(self._last_obs, mode="eval")
-            chunk_obs,  _r, chunk_term, _t, _i = self.env.chunk_step(actions)
+            chunk_obs,  _r, _t, _tr, _i = self.env.chunk_step(actions)
             obs = chunk_obs[-1] if self.env.return_all_frames else chunk_obs
             self.set_obs(obs)
             chunks_used = c + 1
             peak_z = max(peak_z, self._last_obs_eef_z)
-            if bool(np.asarray(chunk_term).any()):
-                self._libero_terminated = True
+            if self.env.episode_done:
                 break
         return {
             "name": "full_task",
@@ -674,7 +662,7 @@ class LiberoPrimitives:
             "max_chunks": max_chunks,
             "peak_lift_m": peak_z - start_z,
             "final_gripper_opening": self._last_obs_gripper,
-            "libero_terminated": self._libero_terminated,
+            "libero_terminated": self.env.episode_done,
         }
 
 
@@ -881,7 +869,7 @@ def dump_state(driver: LiberoPrimitives, output_dir: str, step_idx: int,
 
     blob = {
         "step_idx": step_idx,
-        "libero_terminated": driver._libero_terminated,
+        "libero_terminated": driver.env.episode_done,
         "state": state,
     }
     # Merge the execution log (command + result + elapsed_s) into the
