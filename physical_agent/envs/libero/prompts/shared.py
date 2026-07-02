@@ -6,7 +6,7 @@ MCP_RUNTIME_ADAPTER = """
 CURRENT MCP RUNTIME ADAPTER:
 - The environment server is already running and managed by the runner.
 - Do not start, stop, restart, or otherwise manage `env_server.py`.
-- Do not write `command.json` or any file-based driver command.
+- Do not issue file-based driver commands.
 - Do not emit plain-text pseudo tool calls such as `<tool_call>`, `[tool_use:]`,
   or JSON action commands.
 - For images, use Claude Code's structured `Read` tool.

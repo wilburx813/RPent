@@ -51,6 +51,8 @@ legacy command examples or older command formats.
 
 `MCP_RUNTIME_ADAPTER` is placed before guide-loading instructions so the active
 prompt preserves guide strategy while using the current structured runtime tools.
+Detailed runtime constraints, such as tool availability and forbidden legacy
+paths, should stay in `prompts/system.py` and the guide-level runtime contract.
 
 ## Safe Checklist for Prompt Changes
 
@@ -59,6 +61,6 @@ Before changing LIBERO prompts:
 1. Confirm the active prompt path: `cli/main.py` -> `prompt_bundle.py` -> `prompts/system.py`.
 2. Check which shared constants are imported by `prompts/system.py`.
 3. Keep runtime-tool guidance before guide-source instructions.
-4. Keep guide source paths accurate.
+4. Keep guide source paths and guide-level runtime contracts accurate.
 5. Avoid changing unrelated prompt behavior in the same patch.
 6. For static prompt changes, inspect the rendered prompt or grep the active prompt fragments before relying on the new path.

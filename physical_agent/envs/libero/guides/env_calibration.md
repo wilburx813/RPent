@@ -1,15 +1,25 @@
 # LIBERO-PRO Environment Calibration
 
+## Current LIBERO MCP Runtime Contract
+
+Use this file as a calibration reference only. For current MCP-based runs, use
+structured MCP tools, do not issue file-based driver commands, and do not manually manage
+`env_server.py`. Do not read BDDL files or hidden task definition files to infer
+coordinates. Do not expect object world coordinates in `states.json`; localize
+objects through images_cam + depth/back_project, segment, and wrist/high-res
+artifacts when available.
+
 Measured 2026-05-20 on `libero_10_with_mug` t0 (LIVING_ROOM frame) and t8
 (KITCHEN frame). All probes use `move_to` with `gripper=-1` and tight
 `step_clip≤0.015`.
 
 ## Key finding: PRO has TWO scene frames, picked per-task by table fixture
 
-Each task's BDDL specifies one of two table fixtures, which sets the entire
+Each task scene uses one of two table fixtures, which sets the entire
 world-frame z origin. The OSC workspace and all pick/place altitudes shift
-accordingly. **Always check `states.json[0].state.robot0_eef_pos[2]` after reset and
-branch on it.**
+accordingly. **Check `states.json[0].state.robot0_eef_pos[2]` in the initial
+state and branch on it.** Do not read BDDL files for this; use runtime state and
+visual evidence.
 
 | Fixture | eef home z | Table top z | Used by tasks |
 |---|---|---|---|
@@ -125,8 +135,8 @@ limit 1.15). My libero_10 t0 used z=0.95 for travel — safe and consistent.
 6. **Pi0 may refuse to grasp in cluttered scenes after a partial completion.**
    In libero_10_with_mug t0, after the first can entered the basket Pi0
    failed to pick the second (chunks=25, peak_lift=0). Workarounds: re-pre-pos
-   precisely above the remaining target at z=`floor + 0.07`; reset and
-   restart the multi-object sequence; or use LLM-scripted grasp via
+   precisely above the remaining target at z=`floor + 0.07`; re-localize and
+   recover in the current episode if safe; or use LLM-scripted grasp via
    `move_to` + `set_gripper` (Appendix in STRICT_HYBRID_GUIDE).
 
 ## Calibration log files
@@ -139,16 +149,14 @@ Raw probe logs are preserved in:
 
 ## Reproducer
 
-```bash
-cd ${PHYSICALAGENT_REPO_ROOT:-$(pwd)}
-LIBERO_TYPE=pro CUDA_VISIBLE_DEVICES=0 python \
-  deployment/rlinf/env_server.py \
-  --suite libero_10_with_mug --task 0 --seed 0 --max_episode_steps 5000 \
-  --max_steps 80 &
+Legacy calibration notes below describe the old file-driver flow. In the
+current MCP runtime, use the runner-managed environment and call structured MCP
+tools instead.
 
-# wait for ready, then for each z in 0.65 .. 0.42:
-echo '{"action":"move_to","xyz":[-0.20, 0.10, 0.65],
-       "gripper":-1,"tol":0.008,"step_clip":0.010,"max_steps":80}' \
-  > $OUTPUT_DIR/command.json
-# read $OUTPUT_DIR/states.json (entry NN) for final_eef_pos & final_dist_m
+```bash
+# For each z in 0.65 .. 0.42, call the MCP tool:
+move_to({"xyz": [-0.20, 0.10, 0.65],
+         "gripper": -1, "tol": 0.008, "step_clip": 0.010,
+         "max_steps": 80})
+# Then read states.json entry NN for final_eef_pos & final_dist_m.
 ```

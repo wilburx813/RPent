@@ -1,5 +1,23 @@
 # LIBERO-Pro Hybrid (Pi0.5 + LLM-in-the-loop) — Handover Guide
 
+## Current LIBERO MCP Runtime Contract
+
+This guide contains historical notes from earlier LIBERO driver iterations.
+
+- Use structured MCP tools exposed by the current runtime; the runner manages
+  the environment server.
+- Use runtime-provided task text and visible perception artifacts.
+- Do not read BDDL files, import benchmark internals, or use hidden task
+  definition files.
+- Do not expect object world coordinates in `states.json`; localize objects
+  through images_cam + depth/back_project, segment, and wrist/high-res
+  artifacts when available.
+- Do not call `reset` or `exit` in current single-episode runs unless the
+  runner explicitly exposes and allows it.
+- `pi0_doubled` is only for non-pick contact skills such as turning a stove,
+  pressing a button, or a short physical push. Do not use it as a general
+  pick/place shortcut.
+
 You are picking up the **LIBERO-Pro** evaluation track from a previous session.
 This guide is everything you need to continue from a cold start. Read it once
 end-to-end before you launch a driver.
@@ -189,7 +207,8 @@ the object slip in the gripper. The bowl ends up centimetres off target.
 Mitigation (proven on `_swap` t0):
 - `carry_z = 1.15` (higher than usual 1.10)
 - `step_clip = 0.020` (slower)
-- Verify mid-travel that `object_xyz - eef_xyz` is unchanged from post-pick
+- Verify mid-travel with image evidence that the carried object remains coupled
+  to the EEF/gripper relative to the post-pick frame
 
 If offset drifted >5 mm, re-pre-position and re-pick. This pattern is
 baked into `results_spatial_pert/recipe_spatial_swap_t0_s0.jsonl`.
@@ -216,18 +235,10 @@ Replace `spatial` with `object`, `goal`, or `10` for the other base suites.
 
 ### 4.1. Hybrid run — same as STRICT_HYBRID_GUIDE except `LIBERO_TYPE=pro`
 
-```bash
-ps -ef | grep env_server | grep -v grep | awk '{print $2}' | xargs -r kill
-cd ${PHYSICALAGENT_REPO_ROOT:-$(pwd)}
-OUTPUT_DIR="${OUTPUT_DIR:-$(mktemp -d -t env_server.XXXXXX)}"
-rm -rf "$OUTPUT_DIR"
-LIBERO_TYPE=pro CUDA_VISIBLE_DEVICES=0 python \
-  deployment/rlinf/env_server.py \
-  --suite libero_spatial_task --task 0 --seed 0 --max_episode_steps 600
-# (run in background; wait for $OUTPUT_DIR/states.json)
-```
-
-Then issue JSON commands per STRICT_HYBRID_GUIDE §"The command vocabulary".
+Use the current MCP runner with the desired LIBERO-Pro suite/task/seed. The
+runner owns `env_server.py` and exposes structured tools; do not kill or launch
+`env_server.py` manually from the agent, and do not issue JSON file-driver
+commands.
 
 Save the audit at the end as:
 
@@ -244,7 +255,7 @@ populate:
 {
   "suite": "libero_spatial_task",
   "perturbation_type": "task (P1 Task perturbation)",
-  "perturbed_task_language": "<actual :language from BDDL>",
+  "perturbed_task_language": "<runtime-provided perturbed task text>",
   "perturbation_semantics": "<short description of what changed>",
   "expected_baseline_behavior": "<predicted Pi0 fullshot failure mode>",
   // ... and the standard fields from STRICT_HYBRID_GUIDE
@@ -282,12 +293,12 @@ reading `final_state` and printing object xy distance to the place target.
   the table; coordinates from the *base* task are meaningless. Always
   open `images/image_00.png` and describe the scene before deciding targets.
 - **Rule 1 (no `pi0_end_to_end`).** Same as STRICT_HYBRID_GUIDE: Pi0
-  performs the grasp via `pi0_pick` with `track_obj` cut; the LLM does
-  every motion + release. Under PRO this is doubly important — handing
-  back to Pi0 means handing back to the prompt-blind / memorized-place
-  habit you are *trying to falsify*.
-- **Rule 2 (multi-episode iteration).** Use freely. `_swap` t0 needed 2
-  episodes. Document attempts in the audit JSON's `regime_history` field.
+  performs the grasp via `pi0_pick`; the LLM does every motion + release.
+  Under PRO this is doubly important — handing back to Pi0 means handing back
+  to the prompt-blind / memorized-place habit you are *trying to falsify*.
+- **Rule 2 (single-episode current run).** Do not call `reset` or `exit`
+  unless the runner explicitly exposes and allows it. Recover within the
+  current episode when safe; otherwise write an honest stuck/failure audit.
 
 ## 6. Existing corpus
 
@@ -332,34 +343,6 @@ only for t0**. That's the work that remains.
    grid. The headline number is the **conditional**: of the seeds Pi0
    fails on, what fraction does hybrid succeed on? That is the strongest
    single statistic the agentic decomposition can claim.
-
-## 8. Quick reference for a brand-new session
-
-```bash
-# 1. Sanity-check liberopro patch present
-LIBERO_TYPE=pro python -c \
-  "import liberopro.liberopro.benchmark as b; print(b.get_benchmark('libero_spatial_task')().get_task(0).language)"
-# -> must read 'Pick the akita black bowl not between ...' (the perturbed text)
-
-# 2. Start a hybrid driver (background)
-cd ${PHYSICALAGENT_REPO_ROOT:-$(pwd)}
-LIBERO_TYPE=pro CUDA_VISIBLE_DEVICES=0 python \
-  deployment/rlinf/env_server.py \
-  --suite libero_spatial_task --task <N> --seed 0 --max_episode_steps 600
-
-# 3. Wait for readiness
-until [ -f $OUTPUT_DIR/states.json ] && [ -s $OUTPUT_DIR/states.json ]; do sleep 5; done
-
-# 4. Open states.json (step 0 entry) AND images/image_00.png; describe the scene; decide target
-# 5. Issue JSON commands per STRICT_HYBRID_GUIDE §"The command vocabulary"
-# 6. Save audit + recipe to resources/libero/results_<base>_pert/
-
-# 7. Run Pi0 baseline for the same (suite, task, seed)
-LIBERO_TYPE=pro CUDA_VISIBLE_DEVICES=0 python \
-  physical_agent/primitives/pi0_baseline.py \
-  --suite libero_spatial_task --task <N> --seed 0 --max_chunks 60 \
-  --out physical_agent/primitives/resources/libero/results_spatial_pert/baseline_pi0_spatial_task_t<N>_s0.json
-```
 
 When in doubt about a primitive or a rule, the source of truth is
 `strict_hybrid_guide.md`. This guide only

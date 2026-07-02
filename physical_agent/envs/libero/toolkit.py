@@ -45,6 +45,7 @@ class LiberoToolkit(Toolkit):
         for name in (
             "view_driver_state",
             "view_camera_meta",
+            "segment",
             "back_project",
             "finish",
         ):
@@ -54,6 +55,7 @@ class LiberoToolkit(Toolkit):
         for name in (
             "move_to",
             "pi0_pick",
+            "pi0_doubled",
             "release",
             "set_gripper",
             "rotate_wrist",

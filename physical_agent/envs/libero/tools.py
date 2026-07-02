@@ -1,6 +1,7 @@
 """LIBERO + OpenPI tool implementation."""
 from __future__ import annotations
 
+import base64
 import json
 import os
 from typing import Any
@@ -128,8 +129,6 @@ class LiberoPrimitives:
         max_chunks: int = 30,
         lift_thresh: float = 0.05,
         gripper_closed_thresh: float = 0.06,
-        track_obj: str | None = None,
-        track_obj_lift_thresh: float = 0.05,
     ) -> dict:
         """Closed-loop Pi0.5 pick driven by ``prompt`` as the VLA instruction.
 
@@ -150,14 +149,6 @@ class LiberoPrimitives:
         descent_done = False
         success = False
         chunks_used = 0
-        # Track an external object's z to break out as soon as it's lifted —
-        # useful when you want Pi0.5 to ONLY pick (not place) and need a hard
-        # mid-rollout stop right after the grasp.
-        track_obj_init_z = None
-        if track_obj is not None:
-            raw = self.env.raw_obs()
-            track_obj_init_z = float(raw[f"{track_obj}_pos"][2])
-        track_obj_lifted_to = None
 
         for c in range(max_chunks):
             self._vlm_chunk(instr)
@@ -179,14 +170,6 @@ class LiberoPrimitives:
             if descent_done and ascended and closed:
                 success = True
                 break
-            # External-object lift signal (hard cut for hybrid LLM+VLA).
-            if track_obj is not None:
-                raw = self.env.raw_obs()
-                obj_z = float(raw[f"{track_obj}_pos"][2])
-                track_obj_lifted_to = obj_z
-                if (obj_z - track_obj_init_z) >= track_obj_lift_thresh:
-                    success = True
-                    break
             if self.env.episode_done:
                 success = True
                 break
@@ -211,9 +194,47 @@ class LiberoPrimitives:
                 "descent_done": descent_done,
                 "lift_thresh": lift_thresh,
                 "gripper_closed_thresh": gripper_closed_thresh,
-                "track_obj": track_obj,
-                "track_obj_init_z": track_obj_init_z,
-                "track_obj_final_z": track_obj_lifted_to,
+            },
+        }
+
+    def pi0_doubled(
+        self,
+        prompt: str,
+        *,
+        max_chunks: int = 20,
+    ) -> dict:
+        """Closed-loop Pi0.5 contact skill.
+
+        Intended for non-pick contact interactions such as turning knobs,
+        toggling stoves, or short pushes. Success is the official LIBERO
+        termination predicate, not a private object-pose oracle.
+        """
+        instr = prompt
+        task_success = False
+        chunks_used = 0
+
+        for c in range(max_chunks):
+            self._vlm_chunk(instr)
+            chunks_used = c + 1
+            if self.env.episode_done:
+                task_success = True
+                break
+
+        return {
+            "name": "pi0_doubled",
+            "instruction": instr,
+            "success": task_success,
+            "task_success": task_success,
+            "contact_skill_executed": chunks_used > 0,
+            "chunks_used": chunks_used,
+            "max_chunks": max_chunks,
+            "libero_terminated": self.env.episode_done,
+            "diagnostics": {
+                "mode": "contact_skill_success_by_libero_terminated",
+                "success_meaning": (
+                    "`success` mirrors official LIBERO task termination only; "
+                    "for intermediate contact skills, inspect image/state evidence."
+                ),
             },
         }
 
@@ -726,6 +747,7 @@ def write_recipe_from_states(output_dir: str, recipe_tag: str) -> str:
     primitive_actions = {
         "move_to",
         "pi0_pick",
+        "pi0_doubled",
         "release",
         "set_gripper",
         "rotate_wrist",
@@ -955,12 +977,9 @@ TOOLS_SPEC = [
     {
         "name": "pi0_pick",
         "description": (
-            "Pi0.5 closed-loop pick — the ONLY allowed Pi0 invocation; use "
-            "it for the grasp. track_obj is an object NAME (from "
-            "state.object_names); track_obj_lift_thresh forces Pi0 to exit "
-            "the moment the named object lifts by that height, preventing "
-            "Pi0 from continuing into a learned placement. YOU then do every "
-            "move_to and release."
+            "Pi0.5 closed-loop pick. Use it for the grasp; YOU then do "
+            "every move_to and release. Use modest max_chunks and verify "
+            "the grasp from EEF lift, gripper closure, and available images."
         ),
         "input_schema": {
             "type": "object",
@@ -969,14 +988,31 @@ TOOLS_SPEC = [
                     "type": "string",
                     "description": "Pi0 prompt (e.g. 'pick up the akita black bowl').",
                 },
-                "track_obj": {
-                    "type": ["string", "null"],
-                    "description": "Object name to track for the lift-cut signal.",
-                },
                 "max_chunks": {"type": "integer", "description": "Action-chunk budget (default 30)"},
-                "track_obj_lift_thresh": {"type": "number", "description": "Object lift Δz that cuts Pi0, m (default 0.05)"},
                 "lift_thresh": {"type": "number", "description": "EEF post-descent ascent threshold for success, m (default 0.05)"},
                 "gripper_closed_thresh": {"type": "number", "description": "Finger-separation closed threshold (default 0.06)"},
+            },
+            "required": ["prompt"],
+        },
+    },
+    {
+        "name": "pi0_doubled",
+        "description": (
+            "Pi0.5 closed-loop contact skill for non-pick interactions "
+            "(e.g. stove/knob/button/short push). Returned success/task_success "
+            "only mirrors official libero_terminated; for intermediate contact "
+            "skills, success=false does not necessarily mean the contact "
+            "interaction failed. Inspect image/state evidence. Do not use it "
+            "as a general pick/place shortcut."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "Contact-skill prompt, e.g. 'turn on the stove'.",
+                },
+                "max_chunks": {"type": "integer", "description": "Action-chunk budget (default 20)"},
             },
             "required": ["prompt"],
         },
@@ -1093,6 +1129,45 @@ TOOLS_SPEC = [
         "input_schema": {
             "type": "object",
             "properties": {},
+        },
+    },
+    {
+        "name": "segment",
+        "description": (
+            "Optional visual segmentation helper. It consumes existing "
+            "run artifacts only and never renders new camera views. Use it "
+            "as a fallback localization aid when a configured segmentation "
+            "service and the requested image artifact already exist."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "Object/text prompt to segment.",
+                },
+                "camera": {
+                    "type": "string",
+                    "enum": ["agentview", "wrist"],
+                    "description": "Artifact camera to use (default agentview).",
+                },
+                "step": {
+                    "type": ["integer", "null"],
+                    "description": "Step NN to segment; null = latest.",
+                },
+                "point": {
+                    "type": ["array", "null"],
+                    "description": "Optional [row, col] point prompt.",
+                    "items": {"type": "integer"},
+                    "minItems": 2,
+                    "maxItems": 2,
+                },
+                "min_score": {
+                    "type": "number",
+                    "description": "Minimum accepted mask score (default 0.2).",
+                },
+            },
+            "required": ["prompt"],
         },
     },
     {
@@ -1231,6 +1306,133 @@ def view_driver_state(step: int | None = None) -> dict:
     if image_cam:
         out["_image_cam_bytes"] = image_cam
     return out
+
+
+def _segment_image_candidates(nn: int, camera: str) -> list:
+    out_dir = get_output_dir()
+    if camera == "agentview":
+        return [
+            out_dir / "images_cam_hi" / f"image_cam_hi_{nn:02d}.png",
+            out_dir / f"image_cam_hi_{nn:02d}.png",
+            out_dir / "images_cam" / f"image_cam_{nn:02d}.png",
+        ]
+    if camera == "wrist":
+        return [
+            out_dir / "images_wrist_hi" / f"image_wrist_hi_{nn:02d}.png",
+            out_dir / f"image_wrist_hi_{nn:02d}.png",
+            out_dir / "images_wrist" / f"image_wrist_{nn:02d}.png",
+            out_dir / f"image_wrist_{nn:02d}.png",
+            out_dir / "images" / f"image_wrist_{nn:02d}.png",
+        ]
+    raise ValueError(f"unknown segment camera: {camera}")
+
+
+def segment(
+    prompt: str,
+    camera: str = "agentview",
+    step: int | None = None,
+    point: list[int] | None = None,
+    min_score: float = 0.2,
+) -> dict:
+    """Call an optional segmentation service on an existing image artifact.
+
+    This tool deliberately does not render camera views or create wrist/high-res
+    artifacts. If the requested artifact or service is missing, it returns a
+    structured fallback error so the agent can continue with image inspection
+    and back_project.
+    """
+    nn = _latest_step() if step is None else int(step)
+    if nn is None:
+        return {"error": "no driver state entries; cannot select segment image"}
+
+    camera = camera or "agentview"
+    try:
+        candidates = _segment_image_candidates(nn, camera)
+    except ValueError as e:
+        return {"error": str(e)}
+    image_path = next((p for p in candidates if p.exists()), None)
+    if image_path is None:
+        return {
+            "error": "segment image artifact not found",
+            "step": nn,
+            "camera": camera,
+            "checked_paths": [str(p) for p in candidates],
+            "fallback": "Read the available image artifact and use back_project.",
+        }
+
+    server_url = (
+        os.environ.get("SAM3_SERVER_URL")
+        or os.environ.get("SEGMENT_SERVER_URL")
+        or ""
+    ).strip()
+    if not server_url:
+        return {
+            "error": "segmentation service not configured",
+            "step": nn,
+            "camera": camera,
+            "image_path": str(image_path),
+            "fallback": "Use manual visual localization and back_project.",
+        }
+
+    payload = {
+        "prompt": prompt,
+        "camera": camera,
+        "step": nn,
+        "image_path": str(image_path),
+        "image_base64": base64.b64encode(image_path.read_bytes()).decode("ascii"),
+        "point": point,
+        "min_score": min_score,
+    }
+    try:
+        import httpx
+
+        response = httpx.post(
+            server_url.rstrip("/") + "/segment",
+            json=payload,
+            timeout=60,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except Exception as e:
+        return {
+            "error": f"segmentation service call failed: {e}",
+            "step": nn,
+            "camera": camera,
+            "image_path": str(image_path),
+            "fallback": "Use manual visual localization and back_project.",
+        }
+
+    out_dir = get_output_dir()
+    segment_path = out_dir / f"segment_{nn:02d}.json"
+    segment_blob = {
+        "prompt": prompt,
+        "camera": camera,
+        "step": nn,
+        "image_path": str(image_path),
+        "min_score": min_score,
+        "response": data,
+    }
+    segment_path.write_text(json.dumps(segment_blob, indent=2, default=str))
+    overlay_b64 = data.get("overlay_base64") if isinstance(data, dict) else None
+    overlay_path = None
+    if overlay_b64:
+        overlay_path = out_dir / f"segment_overlay_{nn:02d}.png"
+        try:
+            overlay_path.write_bytes(base64.b64decode(overlay_b64))
+        except Exception:
+            overlay_path = None
+
+    result = {
+        "step": nn,
+        "camera": camera,
+        "image_path": str(image_path),
+        "segment_path": str(segment_path),
+        "response": data,
+    }
+    if overlay_path is not None:
+        result["overlay_path"] = str(overlay_path)
+        result["_image_bytes"] = overlay_path.read_bytes()
+    return result
 
 
 def finish(status: str, summary: str) -> dict:

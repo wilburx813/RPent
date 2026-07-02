@@ -31,7 +31,7 @@ WORKFLOW = """
 6. EXECUTE one primitive at a time by calling its tool, e.g.:
 
        move_to({"xyz": [x, y, z], "gripper": -1, ...})
-       pi0_pick({"prompt": "...", "track_obj": "...", ...})
+       pi0_pick({"prompt": "...", "max_chunks": 20, ...})
        release({})
 
    Each tool blocks until the next states.json entry, and returns the
@@ -68,13 +68,18 @@ and writes artifacts in `{{output_dir}}/`:
 
 - Do not start, stop, restart, or otherwise manage `env_server.py`; the
   runner already manages it.
-- Do not write `command.json` or any file-based driver command.
+- Call only structured tools exposed by the runtime; do not issue file-based
+  driver commands.
+- Never access `.bddl`, `bddl_files`, benchmark internals, or hidden task
+  definition files through any tool. Normal filesystem access to visible run
+  artifacts, logs, images, guides, and recipes is allowed.
 - Read PNG/JPG/JPEG images with Claude Code's structured `Read` tool.
 - Do not invent tools or describe tool calls in plain text; call structured
   tools exposed by the runtime.
 - Call one of the per-primitive tools (`move_to`, `pi0_pick`, `release`,
-  `set_gripper`, `rotate_wrist`, `rotate_pitch`, `move_pose`) to issue one
-  primitive. (Under the Claude Code / Codex CLI these same tools appear
+  `set_gripper`, `rotate_wrist`, `rotate_pitch`, `move_pose`, `pi0_doubled`)
+  to issue one primitive. `segment` is an optional perception/localization aid,
+  not a motion primitive. (Under the Claude Code / Codex CLI these same tools appear
   namespaced as `mcp__physical_agent__<name>`, e.g.
   `mcp__physical_agent__move_to`; call them by whatever name your tool list
   shows.)
@@ -107,23 +112,30 @@ RULES = Numbered([
     Pi0 is ONLY for the grasp. Use the MCP tool:
       pi0_pick({
         "prompt": "<carefully chosen prompt>",
-        "track_obj": "<object_name>_N",
-        "track_obj_lift_thresh": 0.05,
         "lift_thresh": 0.05,
         "gripper_closed_thresh": 0.06,
         "max_chunks": 20
       })
-    `track_obj` is an object NAME (from state.object_names), not a coordinate.
-    YOU do every `move_to` and the `release`. NEVER let Pi0 finish the place.
+    Do not use object-pose lift oracles in perception-isolated runs unless
+    explicitly enabled by the runner for a debug/oracle ablation. Verify the
+    grasp from EEF lift, gripper closure, and available images. YOU do every
+    `move_to` and the `release`. NEVER let Pi0 finish the place.
+    """,
+    """
+    pi0_doubled is ONLY for non-pick contact interactions such as turning a
+    stove, pressing a button, or a short physical push. Its success condition is
+    the official `libero_terminated` flag. Do not use pi0_doubled as a general
+    pick/place shortcut.
     """,
     """
     Inspect THEN act. Read states.json[0] + images_cam/image_cam_00.png +
     camera_meta + the relevant guides/recipes BEFORE your first command.
     """,
     """
-    Pi0 IS the delivery service; walk the prompt ladder before scripting:
-      1. "pick up the {object}"  2. full BDDL task language  3. spatial qualifier
-      4. re-position pre-pos (lower z, offset xy 5cm) and retry Pi0.
+    Walk the Pi0 prompt ladder before scripting a grasp:
+      1. short object-specific grasp prompt  2. verified spatial qualifier
+      3. re-position pre-pos (lower z, offset xy 5cm) and retry Pi0.
+    Do not read BDDL files or use hidden task definitions as prompt text.
     """,
     """
     SINGLE EPISODE. NO `reset` / `exit` mid-run. NO teleport primitives
@@ -152,7 +164,7 @@ ALWAYS apply the manipulation offsets from memory to the PERCEIVED position
 
 ENVIRONMENT = BulletList([
     "Single-step xy within ±0.30 or OSC flips IK; split long traversals.",
-    "track_obj_lift_thresh 0.05 (flat) / 0.08 (slippery tall bottles).",
+    "Do not use object-pose lift oracles unless explicitly running a debug/oracle ablation.",
     "step_clip 0.025 (empty/box) / 0.015 (cans) / 0.012 (tall bottles).",
     "Frame: state.robot0_eef_pos[2] ≈ 0.68 LIVING_ROOM / 1.17 KITCHEN / 0.26 object.",
     "BOWL: eef_y = plate_y + 0.045. TALL BOTTLES: carry z=0.30, drop without descending.",
