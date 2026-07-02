@@ -4,7 +4,6 @@ from __future__ import annotations
 import base64
 import json
 import os
-from typing import Any
 
 import imageio.v2 as imageio
 import numpy as np
@@ -900,6 +899,7 @@ def dump_state(driver: LiberoPrimitives, output_dir: str, step_idx: int,
     blob = {
         "step_idx": step_idx,
         "libero_terminated": driver.env.episode_done,
+        "task_language": driver.env.get_task_language(),
         "state": state,
     }
     # Merge the execution log (command + result + elapsed_s) into the
@@ -1292,6 +1292,7 @@ def view_driver_state(step: int | None = None) -> dict:
         return {"error": f"step {nn} not present in driver state trace: {e}"}
 
     out: dict = {"step": nn}
+    out["task_language"] = data.get("task_language")
     out["state"] = data.get("state", data)
     out["libero_terminated"] = data.get("libero_terminated")
     out["log"] = {

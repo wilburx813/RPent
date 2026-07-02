@@ -256,6 +256,9 @@ class LiberoEnvFacade:
             )
         )
 
+    def get_task_language(self) -> str | None:
+        return self._env.task_descriptions[self._env_idx]
+
     def cached_image(self) -> np.ndarray | None:
         cached = getattr(self._env, "_cached_full_image", None)
         if cached is None:

@@ -101,6 +101,11 @@ class LiberoEnvClient:
             "env.get_camera_meta", timeout_s=_TIMEOUT_S["default"]
         )
 
+    def get_task_language(self) -> str | None:
+        return self._client.call(
+            "env.get_task_language", timeout_s=_TIMEOUT_S["default"]
+        )
+
     def cached_image(self) -> np.ndarray | None:
         return self._client.call(
             "env.cached_image", timeout_s=_TIMEOUT_S["default"]
