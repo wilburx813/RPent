@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
+from urllib.parse import urlsplit, urlunsplit
 
 import imageio.v2 as imageio
 import numpy as np
@@ -1363,7 +1365,12 @@ TOOLS_SPEC = [
             "Optional visual segmentation helper. It consumes existing "
             "run artifacts only and never renders new camera views. Use it "
             "as a fallback localization aid when a configured segmentation "
-            "service and the requested image artifact already exist."
+            "service and the requested image artifact already exist. "
+            "If SAM3_SERVER_URL is set, it uses a SAM3-compatible "
+            "protocol (/segment with text_prompt, /segment_point for point "
+            "prompts). Without SAM3_SERVER_URL, it returns a structured "
+            "fallback. world_xyz is produced only when a matching world map "
+            "artifact exists."
         ),
         "input_schema": {
             "type": "object",
@@ -1383,7 +1390,11 @@ TOOLS_SPEC = [
                 },
                 "point": {
                     "type": ["array", "null"],
-                    "description": "Optional [row, col] point prompt.",
+                    "description": (
+                        "Optional [row, col] point prompt. With "
+                        "SAM3_SERVER_URL this is converted to server "
+                        "[x, y] point_coords for /segment_point."
+                    ),
                     "items": {"type": "integer"},
                     "minItems": 2,
                     "maxItems": 2,
@@ -1393,7 +1404,6 @@ TOOLS_SPEC = [
                     "description": "Minimum accepted mask score (default 0.2).",
                 },
             },
-            "required": ["prompt"],
         },
     },
     {
@@ -1570,27 +1580,293 @@ def view_driver_state(step: int | None = None) -> dict:
     return out
 
 
-def _segment_image_candidates(nn: int, camera: str) -> list:
+def _segment_artifact_pairs(nn: int, camera: str) -> list:
     out_dir = get_output_dir()
     if camera == "agentview":
         return [
-            out_dir / "images_cam_hi" / f"image_cam_hi_{nn:02d}.png",
-            out_dir / f"image_cam_hi_{nn:02d}.png",
-            out_dir / "images_cam" / f"image_cam_{nn:02d}.png",
+            (
+                out_dir / "images_cam_hi" / f"image_cam_hi_{nn:02d}.png",
+                out_dir / "world_hi" / f"world_hi_{nn:02d}.npy",
+            ),
+            (
+                out_dir / "images_cam" / f"image_cam_{nn:02d}.png",
+                out_dir / "world" / f"world_{nn:02d}.npy",
+            ),
         ]
     if camera == "wrist":
         return [
-            out_dir / "images_wrist_hi" / f"image_wrist_hi_{nn:02d}.png",
-            out_dir / f"image_wrist_hi_{nn:02d}.png",
-            out_dir / "images_wrist" / f"image_wrist_{nn:02d}.png",
-            out_dir / f"image_wrist_{nn:02d}.png",
-            out_dir / "images" / f"image_wrist_{nn:02d}.png",
+            (
+                out_dir / "images_wrist_hi" / f"image_wrist_hi_{nn:02d}.png",
+                out_dir / "world_wrist_hi" / f"world_wrist_hi_{nn:02d}.npy",
+            ),
+            (
+                out_dir / "images_wrist" / f"image_wrist_{nn:02d}.png",
+                out_dir / "world_wrist" / f"world_wrist_{nn:02d}.npy",
+            ),
         ]
     raise ValueError(f"unknown segment camera: {camera}")
 
 
+def _select_segment_artifacts(nn: int, camera: str):
+    pairs = _segment_artifact_pairs(nn, camera)
+    for image_path, world_path in pairs:
+        if image_path.exists() and world_path.exists():
+            return image_path, world_path, pairs
+    for image_path, world_path in pairs:
+        if image_path.exists():
+            return image_path, world_path, pairs
+    return None, None, pairs
+
+
+def _next_segment_artifact_paths(out_dir, nn: int):
+    idx = 0
+    while True:
+        segment_path = out_dir / f"segment_{nn:02d}_{idx:02d}.json"
+        overlay_path = out_dir / f"segment_overlay_{nn:02d}_{idx:02d}.png"
+        if not segment_path.exists() and not overlay_path.exists():
+            return segment_path, overlay_path, idx
+        idx += 1
+
+
+def _redact_server_url(url: str) -> str:
+    try:
+        parts = urlsplit(url)
+        netloc = parts.hostname or ""
+        if ":" in netloc and not netloc.startswith("["):
+            netloc = f"[{netloc}]"
+        if parts.port is not None:
+            netloc += f":{parts.port}"
+        return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+    except Exception:
+        return "<redacted>"
+
+
+def _decode_sam3_mask(mask_b64: str, shape) -> np.ndarray:
+    raw = base64.b64decode(mask_b64)
+    shape = tuple(shape)
+    expected = int(np.prod(shape))
+    if expected > 0 and len(raw) == expected:
+        return np.frombuffer(raw, dtype=np.uint8).reshape(shape).astype(bool)
+    try:
+        decoded = imageio.imread(io.BytesIO(raw))
+        if decoded.ndim == 3:
+            decoded = decoded[..., 0]
+        if shape and decoded.shape != shape:
+            return np.asarray(decoded).astype(bool)
+        return np.asarray(decoded).reshape(shape).astype(bool)
+    except Exception as e:
+        raise ValueError(
+            f"could not decode SAM3 mask as raw uint8 or image bytes: {e}"
+        ) from e
+
+
+def _mask_to_world(mask: np.ndarray, world_map: np.ndarray,
+                   min_valid: int = 10) -> dict:
+    if world_map.ndim != 3 or world_map.shape[2] < 3:
+        return {
+            "world_xyz": None,
+            "world_error": f"invalid world map shape: {tuple(world_map.shape)}",
+            "n_pixels": int(mask.sum()),
+            "n_valid": 0,
+            "mask_resized_to_world_shape": False,
+        }
+
+    if mask.shape != world_map.shape[:2]:
+        return {
+            "world_xyz": None,
+            "world_error": (
+                f"mask/world shape mismatch: mask={tuple(mask.shape)}, "
+                f"world={tuple(world_map.shape[:2])}"
+            ),
+            "n_pixels": int(mask.sum()),
+            "n_valid": 0,
+            "mask_resized_to_world_shape": False,
+        }
+
+    ys, xs = np.where(mask)
+    if ys.size == 0:
+        return {"world_xyz": None, "world_error": "empty mask"}
+
+    pts = world_map[ys, xs].astype(np.float64)
+    valid = np.isfinite(pts).all(axis=1) & (np.abs(pts).sum(axis=1) > 1e-6)
+    pts = pts[valid]
+    result = {
+        "centroid_pixel": [
+            int(round(float(np.median(xs)))),
+            int(round(float(np.median(ys)))),
+        ],
+        "n_pixels": int(mask.sum()),
+        "n_valid": int(pts.shape[0]),
+        "mask_resized_to_world_shape": False,
+    }
+    if pts.shape[0] < min_valid:
+        result.update({
+            "world_xyz": None,
+            "world_error": f"too few valid depth pixels ({int(pts.shape[0])})",
+        })
+        return result
+
+    result["world_xyz"] = [
+        round(float(np.median(pts[:, 0])), 4),
+        round(float(np.median(pts[:, 1])), 4),
+        round(float(np.median(pts[:, 2])), 4),
+    ]
+    return result
+
+
+def _write_segment_overlay(image_path, mask: np.ndarray, overlay_path) -> bool:
+    try:
+        image = imageio.imread(image_path)
+        if image.ndim != 3 or image.shape[:2] != mask.shape:
+            return False
+        overlay = image.copy()
+        red = np.zeros_like(overlay)
+        red[..., 0] = 255
+        overlay[mask] = (
+            0.55 * overlay[mask].astype(np.float32)
+            + 0.45 * red[mask].astype(np.float32)
+        ).astype(np.uint8)
+        imageio.imwrite(overlay_path, overlay)
+        return overlay_path.exists()
+    except Exception:
+        return False
+
+
+def _sam3_segment(server_url: str, image_path, prompt: str,
+                  point: list[int] | None, min_score: float) -> dict:
+    import httpx
+
+    image_b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
+    point_coords_sent = None
+    if point is not None:
+        point_coords_sent = [float(point[1]), float(point[0])]
+        response = httpx.post(
+            server_url.rstrip("/") + "/segment_point",
+            json={
+                "image_base64": image_b64,
+                "point_coords": point_coords_sent,
+            },
+            timeout=60,
+        )
+        response.raise_for_status()
+        data = response.json()
+        shape = tuple(data.get("masks_shape", (0, 0, 0)))
+        if not shape or shape[0] == 0:
+            return {
+                "raw_response": data,
+                "error": "sam3 point prompt returned no mask",
+            }
+        try:
+            raw = base64.b64decode(data["masks_base64"])
+            masks = np.frombuffer(
+                raw,
+                dtype=np.dtype(data.get("masks_dtype", "float32")),
+            ).reshape(shape)
+        except Exception as e:
+            return {
+                "raw_response": data,
+                "error": f"could not decode SAM3 point mask: {e}",
+                "point_input": point,
+                "point_coords_sent": point_coords_sent,
+                "point_convention": "input_row_col_to_server_xy",
+            }
+        if masks.ndim == 2:
+            mask = masks > 0.5
+        else:
+            mask = masks[0] > 0.5
+        score = float(data.get("scores", [1.0])[0])
+        if score < min_score:
+            return {
+                "raw_response": data,
+                "error": f"low score {score:.3f} < {min_score}",
+                "score": round(score, 3),
+                "box": None,
+                "mask_shape": list(mask.shape),
+                "point_input": point,
+                "point_coords_sent": point_coords_sent,
+                "point_convention": "input_row_col_to_server_xy",
+            }
+        return {
+            "raw_response": data,
+            "mask": mask,
+            "score": score,
+            "box": None,
+            "mask_shape": list(mask.shape),
+            "point_input": point,
+            "point_coords_sent": point_coords_sent,
+            "point_convention": "input_row_col_to_server_xy",
+        }
+
+    response = httpx.post(
+        server_url.rstrip("/") + "/segment",
+        json={"image_base64": image_b64, "text_prompt": prompt},
+        timeout=60,
+    )
+    response.raise_for_status()
+    data = response.json()
+    results = data.get("results", []) if isinstance(data, dict) else []
+    if results:
+        top = results[0]
+    elif isinstance(data, dict) and "mask_base64" in data:
+        top = data
+    else:
+        return {
+            "raw_response": data,
+            "error": f"sam3 found nothing for prompt {prompt!r}",
+        }
+
+    score = float(top.get("score", 0.0))
+    if score < min_score:
+        return {
+            "raw_response": data,
+            "error": f"low score {score:.3f} < {min_score}",
+            "score": round(score, 3),
+            "box": top.get("box"),
+        }
+
+    try:
+        mask = _decode_sam3_mask(top["mask_base64"], top["shape"])
+    except Exception as e:
+        return {
+            "raw_response": data,
+            "error": f"could not decode SAM3 mask: {e}",
+            "score": round(score, 3),
+            "box": top.get("box"),
+        }
+    return {
+        "raw_response": data,
+        "mask": mask,
+        "score": score,
+        "box": top.get("box"),
+        "mask_shape": list(mask.shape),
+    }
+
+
+def _summarize_segment_response(data) -> dict:
+    if not isinstance(data, dict):
+        return {"type": type(data).__name__}
+
+    def summarize_value(key, value):
+        if key in {
+            "mask_base64",
+            "masks_base64",
+            "overlay_base64",
+            "image_base64",
+        }:
+            return f"<base64 {len(value)} chars>" if isinstance(value, str) else "<base64>"
+        if isinstance(value, list):
+            if len(value) <= 8 and all(not isinstance(item, (dict, list)) for item in value):
+                return value
+            return [summarize_value(key, item) for item in value[:3]]
+        if isinstance(value, dict):
+            return {k: summarize_value(k, v) for k, v in value.items()}
+        return value
+
+    return {k: summarize_value(k, v) for k, v in data.items()}
+
+
 def segment(
-    prompt: str,
+    prompt: str = "",
     camera: str = "agentview",
     step: int | None = None,
     point: list[int] | None = None,
@@ -1608,26 +1884,23 @@ def segment(
         return {"error": "no driver state entries; cannot select segment image"}
 
     camera = camera or "agentview"
+    if point is None and not prompt:
+        return {"error": "segment needs a prompt or a point"}
     try:
-        candidates = _segment_image_candidates(nn, camera)
+        image_path, world_path, artifact_pairs = _select_segment_artifacts(nn, camera)
     except ValueError as e:
         return {"error": str(e)}
-    image_path = next((p for p in candidates if p.exists()), None)
     if image_path is None:
         return {
             "error": "segment image artifact not found",
             "step": nn,
             "camera": camera,
-            "checked_paths": [str(p) for p in candidates],
+            "checked_paths": [str(image) for image, _ in artifact_pairs],
             "fallback": "Read the available image artifact and use back_project.",
         }
 
-    server_url = (
-        os.environ.get("SAM3_SERVER_URL")
-        or os.environ.get("SEGMENT_SERVER_URL")
-        or ""
-    ).strip()
-    if not server_url:
+    sam3_server_url = os.environ.get("SAM3_SERVER_URL", "").strip()
+    if not sam3_server_url:
         return {
             "error": "segmentation service not configured",
             "step": nn,
@@ -1636,25 +1909,15 @@ def segment(
             "fallback": "Use manual visual localization and back_project.",
         }
 
-    payload = {
-        "prompt": prompt,
-        "camera": camera,
-        "step": nn,
-        "image_path": str(image_path),
-        "image_base64": base64.b64encode(image_path.read_bytes()).decode("ascii"),
-        "point": point,
-        "min_score": min_score,
-    }
     try:
-        import httpx
-
-        response = httpx.post(
-            server_url.rstrip("/") + "/segment",
-            json=payload,
-            timeout=60,
+        data = _sam3_segment(
+            sam3_server_url,
+            image_path,
+            prompt,
+            point,
+            min_score,
         )
-        response.raise_for_status()
-        data = response.json()
+        server_protocol = "sam3"
     except Exception as e:
         return {
             "error": f"segmentation service call failed: {e}",
@@ -1665,20 +1928,69 @@ def segment(
         }
 
     out_dir = get_output_dir()
-    segment_path = out_dir / f"segment_{nn:02d}.json"
+    segment_path, overlay_candidate_path, segment_index = (
+        _next_segment_artifact_paths(out_dir, nn)
+    )
+    overlay_path = None
+    mask = data.get("mask") if isinstance(data, dict) else None
+    raw_response = data.get("raw_response") if isinstance(data, dict) else data
+    response_summary = _summarize_segment_response(raw_response)
+    if isinstance(mask, np.ndarray):
+        if world_path is None or not world_path.exists():
+            world_result = {
+                "world_xyz": None,
+                "world_error": "world map artifact not found for selected image",
+                "expected_world_path": str(world_path) if world_path else None,
+            }
+        else:
+            world_result = _mask_to_world(mask, np.load(world_path))
+            world_result["world_path"] = str(world_path)
+        overlay_path = overlay_candidate_path
+        if not _write_segment_overlay(image_path, mask, overlay_path):
+            overlay_path = None
+    else:
+        world_result = {
+            "world_xyz": None,
+            "world_error": (
+                data.get("error", "segmentation response did not include a mask")
+                if isinstance(data, dict)
+                else "segmentation response did not include a mask"
+            ),
+        }
+
     segment_blob = {
         "prompt": prompt,
         "camera": camera,
-        "step": nn,
+        "source_step": nn,
+        "segment_index": segment_index,
         "image_path": str(image_path),
+        "server_protocol": server_protocol,
+        "server_endpoint": _redact_server_url(sam3_server_url),
         "min_score": min_score,
-        "response": data,
+        "score": (
+            round(float(data["score"]), 3)
+            if isinstance(data, dict) and "score" in data else None
+        ),
+        "box": data.get("box") if isinstance(data, dict) else None,
+        "mask_shape": data.get("mask_shape") if isinstance(data, dict) else None,
+        "point_input": data.get("point_input") if isinstance(data, dict) else None,
+        "point_coords_sent": (
+            data.get("point_coords_sent") if isinstance(data, dict) else None
+        ),
+        "point_convention": (
+            data.get("point_convention") if isinstance(data, dict) else None
+        ),
+        "response": response_summary,
     }
+    if isinstance(data, dict) and data.get("error"):
+        segment_blob["error"] = data["error"]
+    segment_blob.update(world_result)
     segment_path.write_text(json.dumps(segment_blob, indent=2, default=str))
-    overlay_b64 = data.get("overlay_base64") if isinstance(data, dict) else None
-    overlay_path = None
-    if overlay_b64:
-        overlay_path = out_dir / f"segment_overlay_{nn:02d}.png"
+    overlay_b64 = (
+        raw_response.get("overlay_base64") if isinstance(raw_response, dict) else None
+    )
+    if overlay_path is None and overlay_b64:
+        overlay_path = overlay_candidate_path
         try:
             overlay_path.write_bytes(base64.b64decode(overlay_b64))
         except Exception:
@@ -1689,9 +2001,16 @@ def segment(
         "camera": camera,
         "image_path": str(image_path),
         "segment_path": str(segment_path),
-        "response": data,
+        "server_protocol": server_protocol,
+        "score": segment_blob["score"],
+        "box": segment_blob["box"],
+        "world_xyz": segment_blob["world_xyz"],
+        "world_error": segment_blob.get("world_error"),
+        "response": response_summary,
     }
-    if overlay_path is not None:
+    if "error" in segment_blob:
+        result["error"] = segment_blob["error"]
+    if overlay_path is not None and overlay_path.exists():
         result["overlay_path"] = str(overlay_path)
         result["_image_bytes"] = overlay_path.read_bytes()
     return result
