@@ -37,6 +37,12 @@ RPent is built upon three core design principles: Service-oriented, Standardized
 ## Supported Environments
 
 <table style="width: 100%; table-layout: auto; border-collapse: collapse;">
+  <colgroup>
+    <col style="width: 26%;">
+    <col style="width: 28%;">
+    <col style="width: 24%;">
+    <col style="width: 22%;">
+  </colgroup>
   <thead align="center" valign="bottom">
     <tr>
       <th>Agentic Planner</th>
