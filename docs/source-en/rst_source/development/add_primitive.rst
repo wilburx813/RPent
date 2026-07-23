@@ -3,7 +3,7 @@ Add an Action Primitive
 
 An *action primitive* in RPent is anything that turns a tool call
 into an executable action for the environment. It can be a learned
-policy (a VLA or WAM), a diffusion policy, or a scripted routine
+policy (a VLA, a WAM, or a diffusion policy) or a scripted routine
 (``move_to``, ``open_gripper``). This page walks through how to add
 one, whichever family it falls into.
 
