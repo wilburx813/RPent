@@ -6,9 +6,9 @@ runner。完整的参考实现见 ``robots/libero/``。
 
 RPent 将每个环境的实现分为 Agent 侧和 Driver 侧：
 
-- **Agent 侧**（``robots/<env>/``）—— 运行在 Agent 进程内，提供工具 schema、
+- **Agent 侧**\ （``robots/<env>/``）—— 运行在 Agent 进程内，提供工具 schema、
   primitive driver 逻辑和 prompt。
-- **Driver 侧**（``robots/<env>/env_server.py``）—— 负责运行仿真器或机器人，
+- **Driver 侧**\ （``robots/<env>/env_server.py``）—— 负责运行仿真器或机器人，
   并通过 :class:`rpent.utils.rpc.RpcFacade` 对外提供环境接口。默认使用 HTTP；
   当观测数据包含多帧历史信息或采用嵌套数据结构时，也可以通过
   ``--transport socket`` 切换到 pickle-framed TCP。
@@ -22,10 +22,10 @@ VLA 模型运行在独立进程中
 当一个环境使用 VLA 策略（读取相机观测并输出动作的学习模型）时，模型运行在
 **第三个独立进程** 中，不在 ``env_server`` 中加载：
 
-- **VLA 侧**（``robots/<env>/vla_server.py``）—— 只加载 VLA 策略及其 GPU
+- **VLA 侧**\ （``robots/<env>/vla_server.py``）—— 只加载 VLA 策略及其 GPU
   权重，通过独立的 RPC/HTTP 端点提供 ``vla_load``、``vla_infer`` 和
   ``vla_reset``，不导入仿真器依赖。
-- toolkit 除了 ``EnvClient``，还接收一个 **model client**（LIBERO/Pi0.5
+- toolkit 除了 ``EnvClient``，还接收一个 **model client**\ （LIBERO/Pi0.5
   使用 ``VLAClient``，RoboCasa/RLDX-1 使用 ``RLDXVLAClient``）作为
   ``model`` 参数。两个 client 分别连接不同的 server 进程。
 

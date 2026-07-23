@@ -124,7 +124,7 @@
 2. 智能体每一轮的推理过程会输出到终端，或实时传输到 Dashboard。
 3. 当 LLM 调用 ``finish(status="success", summary="任务已完成")`` 时结束；
    或者达到 ``--max-turns`` / ``--max-episode-steps`` 时结束。
-4. 生成 ``<output_dir>/transcript_*.json``（完整的逐轮记录）和
-   ``<output_dir>/episode.mp4``（渲染得到的回合视频）。
+4. 生成 ``<output_dir>/transcript_*.json``\ （完整的逐轮记录）和
+   ``<output_dir>/episode.mp4``\ （渲染得到的回合视频）。
 
 出问题时, 参考 :doc:`installation` 页底部提到的三份日志文件。

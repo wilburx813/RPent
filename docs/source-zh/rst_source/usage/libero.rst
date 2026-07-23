@@ -135,7 +135,7 @@ Dashboard 会实时展示推理过程、agentview 视图、腕部相机视图、
 叠加信息和动作时间线。使用 ``--dashboard-language zh-cn`` 切换中文 UI。
 
 接入自定义 VLA
-------------
+----------------
 
 如果你有一个与 LIBERO 兼容、但并非 Pi0.5 的 VLA，可以在不修改环境实现的
 情况下替换 model client：

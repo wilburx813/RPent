@@ -76,7 +76,7 @@ primitive driver 方法，以及调用完成后的状态快照。区别仅在于
 调用该工具，无需修改其他代码。
 
 添加一个 VLA（或其他基于模型的 primitive）
------------------------------------------
+------------------------------------------------
 
 基于模型的 primitive 需要增加一些组件，因为模型运行在独立进程中：
 
@@ -87,7 +87,7 @@ primitive driver 方法，以及调用完成后的状态快照。区别仅在于
    - 默认使用 **HTTP**，通过 ``POST /call`` 传输 JSON，适合 LIBERO/Pi0.5
      使用的扁平 ``image + state`` 数据。
    - 当观测数据包含多帧历史信息或采用嵌套数据结构时，可以切换到
-     **socket RPC**（``--transport socket``），避免重复进行 JSON 编码。
+     **socket RPC**\ （``--transport socket``），避免重复进行 JSON 编码。
 
    ``RpcFacade.serve`` 负责 transport 绑定、``healthz``、``shutdown``、
    检测父进程退出并执行资源清理；这里只需实现模型相关的方法。
