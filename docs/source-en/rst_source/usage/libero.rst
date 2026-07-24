@@ -28,7 +28,9 @@ SAM3 configuration
 ------------------
 
 SAM 3.0 segmentation is enabled for every LIBERO run. Download ``sam3.pt``
-from either source below, then point at it via ``SAM3_CHECKPOINT_PATH``:
+from `Hugging Face: facebook/sam3 <https://huggingface.co/facebook/sam3>`_
+or `ModelScope: facebook/sam3 <https://modelscope.cn/models/facebook/sam3>`_,
+then point at it via ``SAM3_CHECKPOINT_PATH``:
 
 .. code-block:: bash
 
@@ -41,10 +43,6 @@ from either source below, then point at it via ``SAM3_CHECKPOINT_PATH``:
 
    export SAM3_CHECKPOINT_PATH=/path/to/sam3/sam3.pt
 
-Download the checkpoint from `Hugging Face: facebook/sam3
-<https://huggingface.co/facebook/sam3>`_ or `ModelScope: facebook/sam3
-<https://modelscope.cn/models/facebook/sam3>`_.
-
 Task selection
 --------------
 
@@ -55,8 +53,7 @@ A LIBERO run uses the following task settings:
 - ``--task`` — the task index within the suite.
 - ``--seed`` — the environment seed.
 - ``--libero-type`` — the LIBERO variant: ``standard`` | ``pro`` |
-  ``plus``. If omitted, RPent falls back to ``LIBERO_TYPE`` in the
-  environment (default ``pro``).
+  ``plus``.
 
 .. _libero-pro-core-suites:
 
@@ -96,12 +93,12 @@ Minimal command
 .. code-block:: bash
 
    export PI05_CHECKPOINT_PATH=/path/to/rlinf-pi05-libero-130-fullshot-sft
-   export LIBERO_TYPE=pro
-   export CUDA_VISIBLE_DEVICES=0
 
    rpent --env libero \
      --suite libero_object_swap --task 2 --seed 0 \
      --planner claude_code --model claude-opus-4-8
+
+To switch planners, see :doc:`configure_planner`.
 
 What runs where
 ---------------
@@ -117,15 +114,17 @@ What runs where
 - **sam3_server** (``robots/libero/sam3_server.py``) — owns SAM 3.0 and
   exposes text or single-positive-point segmentation through the same RPC
   transports (HTTP or socket). It returns only the top compressed PNG mask.
-- **Toolkit** (``robots/libero/toolkit.py``) — defines the tools the
+- **toolkit** (``robots/libero/toolkit.py``) — defines the tools the
   LLM can call: ``pi0_pick`` (fed to Pi0.5), ``move_to``,
   ``rotate_wrist``, ``back_project``, ``view_driver_state``,
   ``finish``, …
 
-Tools the planner sees
-----------------------
+Tools the planner can call
+--------------------------
 
-Key LIBERO tools include:
+LIBERO tools fall into two groups: physical action tools and read-only tools.
+
+**Physical action tools:**
 
 - ``pi0_pick(prompt, ...)`` — use Pi0.5 to execute a closed-loop grasp.
 - ``pi0_doubled(prompt, ...)`` — use Pi0.5 for a non-pick contact action.
@@ -139,6 +138,11 @@ Key LIBERO tools include:
 - ``set_gripper(gripper=..., steps=...)`` — hold the pose and drive the
   gripper for a fixed number of steps.
 - ``release(...)`` — open the gripper.
+
+Physical action tools advance the environment and record new state and images.
+
+**Read-only tools:**
+
 - ``back_project(row, col, ...)`` — back-project an image pixel to world
   coordinates.
 - ``segment(prompt=... / point=..., ...)`` — use SAM3 to segment an existing
@@ -147,8 +151,7 @@ Key LIBERO tools include:
 - ``view_camera_meta(camera=..., step=None)`` — read existing camera metadata.
 - ``finish(status, summary)`` — end the current run.
 
-Physical action tools record new state and images after execution. Read-only
-tools do not advance the environment.
+These tools do not advance the environment.
 
 Live dashboard
 --------------
@@ -159,7 +162,7 @@ port and prints the URL in the terminal:
 .. code-block:: bash
 
    rpent --env libero --dashboard \
-     --suite libero_goal_task --task 1 --seed 0 \
+     --suite libero_object_swap --task 2 --seed 0 \
      --planner claude_code --model claude-opus-4-8
 
 The dashboard streams reasoning, agentview + wrist camera + Pi0.5
@@ -173,7 +176,7 @@ If you have a LIBERO-compatible VLA that is not Pi0.5, swap the model
 client without touching the env by:
 
 1. Writing a new ``vla_server.py`` that exposes the same ``predict``
-   RPC contract (over http or socket).
+   RPC contract (over HTTP or socket).
 2. Pointing at it with ``--vla-endpoint [protocol://]host:port``.
 3. Optionally updating ``robots/libero/toolkit.py`` if the tool
    surface (e.g. ``pi0_pick`` → ``mymodel_pick``) needs to change.
