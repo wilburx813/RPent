@@ -34,6 +34,13 @@ from rpent.cli.tui import (
     start_first_prompt_resolver,
     start_interactive_reader,
 )
+from rpent.dashboard.events import (
+    DashboardEventSink,
+    NullDashboardEventSink,
+    RunFinishedEvent,
+    RunStartedEvent,
+)
+from rpent.dashboard.interaction import DashboardInteractionPort
 from rpent.envs import get_env_spec, get_toolkit
 from rpent.planner.base import build_planner
 from rpent.utils.logging import get_logger, init_output_dir
@@ -122,7 +129,7 @@ def _build_argparser() -> argparse.ArgumentParser:
                     help="Dashboard port. 0 asks the OS for a free port.")
     ap.add_argument("--dashboard-language", choices=["en", "zh-cn"], default="en",
                     help="Dashboard UI language. 'zh-cn' serves the Chinese "
-                         "variant (index.zh-cn.html); defaults to English.")
+                         "translation; defaults to English.")
     ap.add_argument("--verbose", action="store_true",
                     help="Enable DEBUG-level logging for stdout and the run.log "
                          "file. Defaults to INFO when not set.")
@@ -141,6 +148,8 @@ def main() -> int:
     env_spec = get_env_spec(early.env_name)
     env_spec.add_cli_args(parser, use_dashboard=early.dashboard)
     args = parser.parse_args()
+    if args.dashboard and args.interactive:
+        parser.error("--dashboard and --interactive cannot be used together")
 
     # With --dashboard, open the launcher first: serve the start screen, then
     # block until the user clicks Run and overlay their choices onto args.
@@ -150,8 +159,8 @@ def main() -> int:
     dashboard_url = None
     launch_config = None
     if args.dashboard:
-        from rpent.dashboard import DashboardServer
         from rpent.dashboard.launcher import apply_to_args, defaults_from_args
+        from rpent.dashboard.server import DashboardServer
 
         dashboard_server = DashboardServer(
             host=args.dashboard_host, port=args.dashboard_port,
@@ -174,7 +183,6 @@ def main() -> int:
     recipe_tag = run_config.recipe_tag
     output_dir = run_config.output_dir
     prompt_vars = run_config.prompt_vars
-    dashboard_state = run_config.dashboard_state
     task_desc = run_config.task_desc
 
     env_name = args.env_name
@@ -191,10 +199,19 @@ def main() -> int:
     ensure_resources(env_name)
 
     # --- dashboard state ---------------------------------------------------
-    if dashboard_state is not None and dashboard_server is not None:
+    dashboard_events: DashboardEventSink = NullDashboardEventSink()
+    dashboard_interaction: DashboardInteractionPort | None = None
+    if dashboard_server is not None:
+        from rpent.dashboard.state import DashboardState
+
+        state = DashboardState.from_run_config(run_config)
+        if args.planner == "claude_code":
+            state.enable_interaction(session_id=state.run_id)
+            dashboard_interaction = state
         # Server is already serving the launcher; register the run so the
         # frontend can switch from the start screen to the live monitor.
-        dashboard_server.register(dashboard_state)
+        dashboard_server.register(state)
+        dashboard_events = state
 
     planner = build_planner(
         args.planner,
@@ -206,11 +223,10 @@ def main() -> int:
         max_tokens=args.max_tokens,
         planner_timeout_s=args.planner_timeout_s,
         claude_code_max_budget_usd=args.claude_code_max_budget_usd,
-        dashboard=dashboard_state,
+        dashboard_events=dashboard_events,
         no_images=args.no_images,
     )
     prompt_bundle = env_spec.prompts
-
     prompt_vars = {**prompt_vars, "output_dir": output_dir}
     system_prompt = prompt_bundle.render(
         "system",
@@ -239,14 +255,19 @@ def main() -> int:
         await_first_prompt = start_first_prompt_resolver(input_queue)
 
     # --- initialise environment --------------------------------------------
-    daemons, primitives_kwargs = env_spec.init_runtime(args, output_dir)
+    daemons, primitives_kwargs = env_spec.init_runtime(
+        args,
+        output_dir,
+        dashboard_events,
+    )
 
     # --- toolkit -----------------------------------------------------------
     toolkit = get_toolkit(
         env_name,
         primitives_kwargs=primitives_kwargs,
         video_path=str(Path(output_dir) / "episode.mp4"),
-        dashboard=dashboard_state,
+        dashboard_events=dashboard_events,
+        save_action_videos=dashboard_server is not None,
     )
 
     # --- agent loop --------------------------------------------------------
@@ -261,19 +282,22 @@ def main() -> int:
             logger.info("no task entered; ending session before start.")
     try:
         if first_user_msg is not None:
+            dashboard_events.emit(RunStartedEvent())
             result = planner.solve(
                 system_prompt=system_prompt,
                 user_message=first_user_msg,
                 toolkit=toolkit,
                 max_turns=args.max_turns,
                 input_queue=input_queue,
+                dashboard_interaction=dashboard_interaction,
             )
             finish_result = result.finish_result
             messages = result.messages
             stats = result.stats
             agent_error = result.error
-    except Exception as e:
-        logger.error("EXCEPTION in agent loop: %s", e)
+    except Exception as exc:
+        logger.error("EXCEPTION in agent loop: %s", exc)
+        agent_error = str(exc)
     finally:
         # Agent-side: flush the episode video before the env+model
         recipe_path = toolkit.write_recipe(recipe_tag)
@@ -306,8 +330,13 @@ def main() -> int:
     if agent_error:
         logger.error("error: %s", agent_error)
 
-    if args.dashboard and dashboard_state is not None:
-        dashboard_state.mark_done()
+    dashboard_events.emit(
+        RunFinishedEvent(
+            state="failed" if agent_error else "succeeded",
+            error=agent_error,
+        )
+    )
+    if dashboard_server is not None:
         logger.info(
             "Run finished. Dashboard still serving at %s. Press Ctrl+C to stop.",
             dashboard_url,

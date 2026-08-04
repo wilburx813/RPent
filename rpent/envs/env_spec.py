@@ -18,10 +18,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from rpent.dashboard.events import DashboardEventSink
 from rpent.envs.prompt_bundle import PromptBundle
 
 if TYPE_CHECKING:
-    from rpent.dashboard.state import State
     from rpent.utils.daemon import ProcessDaemon
 
 
@@ -32,7 +32,6 @@ class RunConfig:
     recipe_tag: str
     output_dir: Path
     prompt_vars: dict[str, Any]
-    dashboard_state: "State | None"
     task_desc: dict[str, Any]
 
 
@@ -45,7 +44,6 @@ class EnvSpec:
     add_cli_args: Callable[[argparse.ArgumentParser, bool], None]
     parse_config: Callable[[argparse.Namespace], RunConfig]
     init_runtime: Callable[
-        [argparse.Namespace, Path],
+        [argparse.Namespace, Path, DashboardEventSink],
         tuple[list["ProcessDaemon"], dict[str, Any]],
     ]
-

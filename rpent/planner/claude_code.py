@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import dataclasses
 import json
+import queue
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -20,6 +21,12 @@ from pathlib import Path
 from typing import Any
 
 from rpent.cli.tui import next_user_line
+from rpent.dashboard.events import (
+    DashboardEventSink,
+    TranscriptEvent,
+    UsageEvent,
+)
+from rpent.dashboard.interaction import DashboardInteractionPort
 from rpent.planner.base import (
     PlannerResult,
     add_mcp_prefix,
@@ -45,6 +52,7 @@ class ClaudeCodePlanner:
         self,
         *,
         output_dir: str,
+        dashboard_events: DashboardEventSink,
         repo_root: str | Path | None = None,
         model: str = "sonnet",
         allowed_tools: str = "Bash Read Write Glob Grep",
@@ -52,7 +60,6 @@ class ClaudeCodePlanner:
         max_budget_usd: float = 10.0,
         extra_dirs: list[str] | None = None,
         output_path: str | Path | None = None,
-        dashboard: Any = None,
     ):
         """Initialize the Claude Agent SDK backend."""
         self._output_dir = str(output_dir)
@@ -63,7 +70,7 @@ class ClaudeCodePlanner:
         self._max_budget_usd = max_budget_usd
         self._extra_dirs = extra_dirs or []
         self._output_path = Path(output_path) if output_path else None
-        self._dashboard = dashboard
+        self._dashboard_events = dashboard_events
 
     def solve(
         self,
@@ -72,16 +79,23 @@ class ClaudeCodePlanner:
         user_message: str,
         toolkit: Toolkit,
         max_turns: int,
-        input_queue=None,
+        input_queue: queue.Queue[str | None] | None = None,
+        dashboard_interaction: DashboardInteractionPort | None = None,
     ) -> PlannerResult:
         """Run a Claude Agent SDK session for the given prompt."""
+        if input_queue is not None and dashboard_interaction is not None:
+            raise ValueError(
+                "input_queue and dashboard_interaction cannot be used together"
+            )
         prompt = f"{system_prompt}\n\n{user_message}" if system_prompt else user_message
         return asyncio.run(
             self._solve_async(
                 prompt,
+                initial_user_text=user_message,
                 toolkit=toolkit,
                 max_turns=max_turns,
                 input_queue=input_queue,
+                dashboard_interaction=dashboard_interaction,
             )
         )
 
@@ -91,11 +105,14 @@ class ClaudeCodePlanner:
         self,
         prompt: str,
         *,
+        initial_user_text: str,
         toolkit: Toolkit,
         max_turns: int,
-        input_queue=None,
+        input_queue: queue.Queue[str | None] | None = None,
+        dashboard_interaction: DashboardInteractionPort | None = None,
     ) -> PlannerResult:
         import claude_agent_sdk
+
         sdk = claude_agent_sdk
         if self._output_path is None:
             with tempfile.NamedTemporaryFile(
@@ -106,7 +123,10 @@ class ClaudeCodePlanner:
             output_path = self._output_path
             output_path.parent.mkdir(parents=True, exist_ok=True)
         raw_stream_path = output_path.with_suffix(output_path.suffix + ".stream.jsonl")
-        recorder = _Recorder(max_turns=max_turns, dashboard=self._dashboard)
+        recorder = _Recorder(
+            max_turns=max_turns,
+            dashboard_events=self._dashboard_events,
+        )
 
         init_output_dir(self._output_dir)
         options = self._build_options(sdk, toolkit=toolkit, max_turns=max_turns)
@@ -133,26 +153,52 @@ class ClaudeCodePlanner:
                     out_f.flush()
                     logger.info(rendered.rstrip())
 
-            def _emit_user(line: str) -> None:
-                rendered = f"\n[user] {line}\n"
+            def _emit_user(line: str, *, initial_prompt: bool = False) -> None:
+                display_text = (
+                    "[initial task instructions submitted]" if initial_prompt else line
+                )
+                rendered = f"\n[user] {display_text}\n"
                 rendered_chunks.append(rendered)
                 out_f.write(rendered)
                 out_f.flush()
                 logger.info(rendered.strip())
+                payload: dict[str, Any] = {"type": "user", "text": line}
+                if initial_prompt:
+                    payload = {"type": "initial_prompt"}
+                self._dashboard_events.emit(TranscriptEvent(payload))
 
             try:
                 if input_queue is None:
+                    if dashboard_interaction is not None:
+                        await asyncio.wait_for(
+                            self._run_dashboard_session(
+                                sdk,
+                                prompt,
+                                options,
+                                recorder,
+                                dashboard_interaction=dashboard_interaction,
+                                initial_user_text=initial_user_text,
+                                emit=_emit,
+                                emit_user=_emit_user,
+                            ),
+                            timeout=self._timeout_s,
+                        )
+                    else:
 
-                    async def consume_stream() -> None:
-                        async for message in sdk.query(prompt=prompt, options=options):
-                            _emit(message)
-                            if recorder.finish_result is not None:
-                                logger.info(
-                                    "FINISH called: %s", recorder.finish_result
-                                )
-                                break
+                        async def consume_stream() -> None:
+                            async for message in sdk.query(
+                                prompt=prompt, options=options
+                            ):
+                                _emit(message)
+                                if recorder.finish_result is not None:
+                                    logger.info(
+                                        "FINISH called: %s", recorder.finish_result
+                                    )
+                                    break
 
-                    await asyncio.wait_for(consume_stream(), timeout=self._timeout_s)
+                        await asyncio.wait_for(
+                            consume_stream(), timeout=self._timeout_s
+                        )
                 else:
                     await self._run_interactive(
                         sdk,
@@ -221,53 +267,43 @@ class ClaudeCodePlanner:
         sentinel (or ``/quit``) interrupts the run; the ``finish`` tool ends it
         normally. Because a human supervises, there is no wall-clock cap here.
         """
-        async with sdk.ClaudeSDKClient(options=options) as client:
-            stop = asyncio.Event()
+        adapter = _TerminalSessionAdapter(input_queue=input_queue, emit_user=emit_user)
+        driver = _ClaudeSessionDriver(
+            sdk=sdk,
+            options=options,
+            recorder=recorder,
+            emit=emit,
+        )
+        await driver.run(prompt, adapter)
 
-            async def pump_input() -> None:
-                # Forward typed lines into the live session; interrupt on quit.
-                while not stop.is_set():
-                    nxt = await asyncio.to_thread(next_user_line, input_queue)
-                    if nxt is None:
-                        stop.set()
-                        with contextlib.suppress(Exception):
-                            await client.interrupt()
-                        return
-                    emit_user(nxt)
-                    # A running turn buffers further input until it ends, so
-                    # interrupt the in-flight turn first; the CLI then delivers
-                    # the steering line as the next user turn while preserving
-                    # the conversation context.
-                    recorder.suppress_next_result_error = True
-                    with contextlib.suppress(Exception):
-                        await client.interrupt()
-                    with contextlib.suppress(Exception):
-                        await client.query(nxt)
-
-            async def consume() -> None:
-                async for message in client.receive_messages():
-                    emit(message)
-                    if recorder.finish_result is not None:
-                        logger.info("FINISH called: %s", recorder.finish_result)
-                        return
-
-            await client.query(prompt)
-            pump = asyncio.create_task(pump_input())
-            consumer = asyncio.create_task(consume())
-            stop_wait = asyncio.create_task(stop.wait())
-            try:
-                await asyncio.wait(
-                    {consumer, stop_wait}, return_when=asyncio.FIRST_COMPLETED
-                )
-            finally:
-                # Unblock the pump's blocking queue read so its worker thread
-                # exits, then cancel and drain the remaining tasks.
-                input_queue.put(None)
-                for task in (consumer, stop_wait, pump):
-                    task.cancel()
-                for task in (consumer, stop_wait, pump):
-                    with contextlib.suppress(asyncio.CancelledError, Exception):
-                        await task
+    async def _run_dashboard_session(
+        self,
+        sdk: Any,
+        prompt: str,
+        options: Any,
+        recorder: "_Recorder",
+        *,
+        dashboard_interaction: DashboardInteractionPort,
+        initial_user_text: str,
+        emit,
+        emit_user,
+    ) -> None:
+        """Drive the Dashboard-owned long-lived Claude session."""
+        adapter = _ClaudeDashboardBridge(
+            interaction=dashboard_interaction,
+            emit_user=emit_user,
+            emit_initial_user=lambda: emit_user(
+                initial_user_text,
+                initial_prompt=True,
+            ),
+        )
+        driver = _ClaudeSessionDriver(
+            sdk=sdk,
+            options=options,
+            recorder=recorder,
+            emit=emit,
+        )
+        await driver.run(prompt, adapter)
 
     # -- options + tool bridge ---------------------------------------------
 
@@ -302,6 +338,244 @@ class ClaudeCodePlanner:
 
 
 # ---------------------------------------------------------------------------
+# Shared long-lived session driver
+# ---------------------------------------------------------------------------
+
+
+class _ClaudeSessionDriver:
+    """Own one SDK client and its single message consumer."""
+
+    def __init__(
+        self,
+        *,
+        sdk: Any,
+        options: Any,
+        recorder: "_Recorder",
+        emit,
+    ) -> None:
+        self._sdk = sdk
+        self._options = options
+        self._recorder = recorder
+        self._emit = emit
+        self._client: Any | None = None
+
+    async def run(self, prompt: str, adapter: Any) -> None:
+        """Open one client, submit the first query, and run one input adapter."""
+        tasks: list[asyncio.Task[Any]] = []
+        async with self._sdk.ClaudeSDKClient(options=self._options) as client:
+            self._client = client
+            try:
+                # Submit before starting the consumer, matching the SDK's
+                # streaming-client contract while its transport buffers output.
+                await self.query(prompt)
+                await adapter.initial_query_succeeded(self)
+
+                consumer = asyncio.create_task(self._consume(adapter))
+                command_pump = asyncio.create_task(adapter.run(self))
+                tasks = [consumer, command_pump]
+                done, _ = await asyncio.wait(
+                    tasks,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in done:
+                    await task
+            finally:
+                # Adapter cleanup first wakes terminal queue reads or Dashboard
+                # condition waits. Then cancel and drain both long-lived tasks
+                # before the SDK client context closes.
+                with contextlib.suppress(Exception):
+                    await adapter.close()
+                for task in tasks:
+                    task.cancel()
+                for task in tasks:
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await task
+                self._client = None
+
+    async def query(self, text: str) -> None:
+        """Submit one user turn to the owned client."""
+        if self._client is None:
+            raise RuntimeError("Claude session is not connected")
+        await self._client.query(text)
+
+    async def interrupt(self) -> None:
+        """Interrupt the owned client and suppress its expected error result."""
+        if self._client is None:
+            raise RuntimeError("Claude session is not connected")
+        self._recorder.suppress_next_result_error = True
+        try:
+            await self._client.interrupt()
+        except BaseException:
+            # A failed interrupt must not hide a later unrelated SDK error.
+            self._recorder.suppress_next_result_error = False
+            raise
+
+    async def _consume(self, adapter: Any) -> None:
+        if self._client is None:
+            raise RuntimeError("Claude session is not connected")
+        async for message in self._client.receive_messages():
+            self._emit(message)
+            # A successful finish tool result owns the boundary: end the
+            # session without giving queued Dashboard input a chance to flush.
+            if self._recorder.finish_result is not None:
+                logger.info("FINISH called: %s", self._recorder.finish_result)
+                return
+            await adapter.on_message(self, message)
+
+
+class _TerminalSessionAdapter:
+    """Preserve the terminal TUI's interrupt-then-query steering policy."""
+
+    def __init__(self, *, input_queue: Any, emit_user) -> None:
+        self._input_queue = input_queue
+        self._emit_user = emit_user
+
+    async def initial_query_succeeded(self, driver: _ClaudeSessionDriver) -> None:
+        return None
+
+    async def run(self, driver: _ClaudeSessionDriver) -> None:
+        while True:
+            nxt = await asyncio.to_thread(next_user_line, self._input_queue)
+            if nxt is None:
+                with contextlib.suppress(Exception):
+                    await driver.interrupt()
+                return
+            self._emit_user(nxt)
+            # Keep the current terminal semantics: every steering line
+            # interrupts the in-flight turn, then enters the same session.
+            with contextlib.suppress(Exception):
+                await driver.interrupt()
+            with contextlib.suppress(Exception):
+                await driver.query(nxt)
+
+    async def on_message(
+        self,
+        driver: _ClaudeSessionDriver,
+        message: Any,
+    ) -> None:
+        return None
+
+    async def close(self) -> None:
+        # Unblock next_user_line() if the consumer (for example finish) won.
+        self._input_queue.put(None)
+
+
+class _ClaudeDashboardBridge:
+    """Adapt one Dashboard Session's thread-safe commands to one SDK client."""
+
+    def __init__(
+        self,
+        *,
+        interaction: DashboardInteractionPort,
+        emit_user,
+        emit_initial_user=None,
+    ) -> None:
+        self._interaction = interaction
+        self._emit_user = emit_user
+        self._emit_initial_user = emit_initial_user
+        self._operation_lock = asyncio.Lock()
+        self._outstanding_queries = 0
+
+    async def initial_query_succeeded(self, driver: _ClaudeSessionDriver) -> None:
+        self._outstanding_queries = 1
+        self._interaction.set_planner_activity("busy", accepting_input=True)
+        if self._emit_initial_user is not None:
+            self._emit_initial_user()
+
+    async def run(self, driver: _ClaudeSessionDriver) -> None:
+        version = self._interaction.interaction_version
+        while self._interaction.planner_activity != "ended":
+            await self._process_commands(driver)
+            version = await asyncio.to_thread(
+                self._interaction.wait_for_interaction_change,
+                version,
+            )
+
+    async def on_message(
+        self,
+        driver: _ClaudeSessionDriver,
+        message: Any,
+    ) -> None:
+        is_result = _kind(message) == "ResultMessage"
+        if not is_result and not _has_tool_result(message):
+            return
+
+        async with self._operation_lock:
+            if is_result:
+                self._outstanding_queries = max(0, self._outstanding_queries - 1)
+                self._interaction.set_planner_activity(
+                    "busy" if self._outstanding_queries else "idle"
+                )
+
+            if await self._handle_interrupt(driver):
+                # Success already flushes. Failure deliberately leaves pending
+                # unchanged even if a boundary arrived at the same time.
+                return
+            await self._flush_pending(driver)
+
+    async def close(self) -> None:
+        self._interaction.seal_interaction()
+
+    async def _process_commands(self, driver: _ClaudeSessionDriver) -> None:
+        async with self._operation_lock:
+            if await self._handle_interrupt(driver):
+                return
+            if self._interaction.planner_activity == "idle":
+                await self._flush_pending(driver)
+
+    async def _handle_interrupt(
+        self,
+        driver: _ClaudeSessionDriver,
+    ) -> bool:
+        if not self._interaction.claim_interrupt_request():
+            return False
+        try:
+            await driver.interrupt()
+        except Exception as exc:
+            self._interaction.complete_interrupt(error=_exception_text(exc))
+            return True
+        self._interaction.complete_interrupt()
+        await self._flush_pending(driver)
+        return True
+
+    async def _flush_pending(self, driver: _ClaudeSessionDriver) -> None:
+        # begin_pending_batch() is the atomic pending -> sending boundary.
+        # Messages submitted after this call remain pending for a later
+        # tool/result boundary.
+        messages = self._interaction.begin_pending_batch()
+        for message in messages:
+            try:
+                await driver.query(message.text)
+            except Exception as exc:
+                self._interaction.mark_message_failed(
+                    message.message_id,
+                    _exception_text(exc),
+                )
+                continue
+            self._interaction.mark_message_sent(message.message_id)
+            self._outstanding_queries += 1
+            self._interaction.set_planner_activity("busy")
+            self._emit_user(message.text)
+
+
+def _has_tool_result(message: Any) -> bool:
+    """Return whether an SDK message contains a completed tool call."""
+    kind = _kind(message)
+    if kind == "UserMessage" and _get(message, "parent_tool_use_id"):
+        return True
+    if kind not in {"AssistantMessage", "UserMessage"}:
+        return False
+    content = _get(message, "content", [])
+    if not isinstance(content, list):
+        return False
+    return any(_kind(block) in {"ToolResultBlock", "tool_result"} for block in content)
+
+
+def _exception_text(exc: BaseException) -> str:
+    return f"{type(exc).__name__}: {exc}"
+
+
+# ---------------------------------------------------------------------------
 # Observation layer
 # ---------------------------------------------------------------------------
 
@@ -315,7 +589,7 @@ class _Recorder:
     """
 
     max_turns: int
-    dashboard: Any = None
+    dashboard_events: DashboardEventSink
     turns: int = 0
     _seen_assistant_ids: set[str] = field(default_factory=set)
     tool_calls: int = 0
@@ -359,12 +633,13 @@ class _Recorder:
             rendered = self._result(message)
         else:
             rendered = ""
-        if self.dashboard is not None:
-            self.dashboard.on_usage(
+        self.dashboard_events.emit(
+            UsageEvent(
                 inp=self.usage["total_input_tokens"],
                 out=self.usage["total_output_tokens"],
                 tool_calls=self.tool_calls,
             )
+        )
         return rendered
 
     # -- per-message handlers ---------------------------------------------
@@ -394,16 +669,16 @@ class _Recorder:
                 text = str(_get(block, "text", "")).strip()
                 if text:
                     lines.append(f"[claude] {text}\n")
-                    if self.dashboard is not None:
-                        self.dashboard.on_event({"type": "text", "text": text})
+                    self.dashboard_events.emit(
+                        TranscriptEvent({"type": "text", "text": text})
+                    )
             elif block_kind == "ThinkingBlock":
                 thinking = str(_get(block, "thinking", "")).strip()
                 if thinking:
                     lines.append(f"[claude-thinking] {thinking}\n")
-                    if self.dashboard is not None:
-                        self.dashboard.on_event(
-                            {"type": "thinking", "text": thinking}
-                        )
+                    self.dashboard_events.emit(
+                        TranscriptEvent({"type": "thinking", "text": thinking})
+                    )
             elif block_kind == "ToolUseBlock":
                 tool_id = str(_get(block, "id", ""))
                 name = strip_mcp_prefix(str(_get(block, "name", "tool")))
@@ -412,10 +687,11 @@ class _Recorder:
                 if name == "finish" and isinstance(tool_input, dict):
                     self.pending_finish[tool_id] = dict(tool_input)
                 lines.append(f"[tool->] {name}: {_short_json(tool_input, limit=500)}\n")
-                if self.dashboard is not None:
-                    self.dashboard.on_event(
+                self.dashboard_events.emit(
+                    TranscriptEvent(
                         {"type": "tool_call", "tool": name, "args": tool_input}
                     )
+                )
             elif block_kind == "ToolResultBlock":
                 lines.append(self._tool_result(block))
         if assistant_error := _get(message, "error"):
@@ -461,14 +737,15 @@ class _Recorder:
         pending = self.pending_finish.pop(tool_use_id, None)
         if pending is not None and not is_error and self.finish_result is None:
             self.finish_result = {"_finish": True, **pending}
-        if self.dashboard is not None:
-            self.dashboard.on_event(
+        self.dashboard_events.emit(
+            TranscriptEvent(
                 {
                     "type": "tool_result",
                     "tool": name,
                     "result": {**summary, "is_error": bool(is_error)},
                 }
             )
+        )
         return f"[tool<-] {name}: {json.dumps(summary, ensure_ascii=False)}\n"
 
     def _result(self, message: Any) -> str:
@@ -547,9 +824,7 @@ def _build_rpent_server(sdk: Any, *, toolkit: Toolkit) -> Any:
         run_tool.__name__ = f"rpent_{name}"
         sdk_tools.append(sdk.tool(name, description, input_schema)(run_tool))
 
-    return sdk.create_sdk_mcp_server(
-        name="rpent", version="0.1.0", tools=sdk_tools
-    )
+    return sdk.create_sdk_mcp_server(name="rpent", version="0.1.0", tools=sdk_tools)
 
 
 def _tool_result_to_mcp(tr: Any) -> dict[str, Any]:

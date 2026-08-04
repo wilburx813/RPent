@@ -14,18 +14,25 @@ import socket
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+import uvicorn
 from fastapi import Body, FastAPI
 from fastapi.responses import (
     FileResponse,
+    HTMLResponse,
     JSONResponse,
     Response,
     StreamingResponse,
 )
-import uvicorn
+from fastapi.staticfiles import StaticFiles
 
-from rpent.dashboard.state import State
+from rpent.dashboard.interaction import (
+    DashboardMessageConflictError,
+    InteractionUnavailableError,
+    UnknownDashboardMessageError,
+)
+from rpent.dashboard.state import DashboardState
 
 
 class DashboardServer:
@@ -42,8 +49,13 @@ class DashboardServer:
         self.host = host
         self.port = int(port)
         self.runs_dir = runs_dir
-        self._index_file = Path(__file__).parent / ("index.zh-cn.html" if language == "zh-cn" else "index.html")
-        self._runs: dict[str, State] = {}
+        dashboard_dir = Path(__file__).parent
+        self._language = "zh-cn" if language == "zh-cn" else "en"
+        self._index_html = (dashboard_dir / "index.html").read_text(encoding="utf-8")
+        self._static_dir = dashboard_dir / "static"
+        self._runs: dict[str, DashboardState] = {}
+        self._sessions: dict[str, DashboardState] = {}
+        self._registry_lock = threading.Lock()
         self._app = self._build_app()
         self._server: uvicorn.Server | None = None
 
@@ -54,10 +66,21 @@ class DashboardServer:
         self._launch_config: dict[str, Any] | None = None
         self._launch_event = threading.Event()
 
-    def register(self, run: State) -> None:
-        self._runs[run.run_id] = run
-        if not self.runs_dir:
-            self.runs_dir = str(run.output_dir.parent)
+    def register(self, run: DashboardState) -> None:
+        with self._registry_lock:
+            if session_id := run.session_id:
+                existing = self._sessions.get(session_id)
+                if existing is not None and existing is not run:
+                    raise ValueError(f"duplicate Dashboard Session id: {session_id}")
+                self._sessions[session_id] = run
+            self._runs[run.run_id] = run
+            if not self.runs_dir:
+                self.runs_dir = str(run.output_dir.parent)
+
+    def _session(self, session_id: str) -> DashboardState | None:
+        """Resolve an interaction Session registered with its run."""
+        with self._registry_lock:
+            return self._sessions.get(session_id)
 
     def wait_for_launch(self, defaults: dict[str, Any]) -> dict[str, Any]:
         """Arm the launcher and block until the user submits the start form.
@@ -91,10 +114,19 @@ class DashboardServer:
 
     def _build_app(self) -> FastAPI:
         app = FastAPI(title="RPent dashboard")
+        app.mount(
+            "/static",
+            StaticFiles(directory=self._static_dir),
+            name="dashboard-static",
+        )
 
         @app.get("/")
-        def index() -> Response:
-            return FileResponse(self._index_file, media_type="text/html")
+        def index() -> HTMLResponse:
+            html = self._index_html.replace(
+                "__DASHBOARD_LANGUAGE__",
+                self._language,
+            )
+            return HTMLResponse(html)
 
         @app.get("/healthz")
         def healthz() -> JSONResponse:
@@ -122,11 +154,82 @@ class DashboardServer:
 
         @app.get("/api/runs")
         def api_runs() -> JSONResponse:
+            with self._registry_lock:
+                runs = list(self._runs.values())
             return JSONResponse(
                 {
                     "runs_dir": self.runs_dir,
-                    "runs": [r.run_info() for r in self._runs.values()],
+                    "runs": [run.run_info() for run in runs],
                 }
+            )
+
+        @app.post("/api/sessions/{session_id:path}/messages")
+        def api_submit_message(
+            session_id: str,
+            payload: dict[str, Any] = Body(default={}),
+        ) -> JSONResponse:
+            live = self._session(session_id)
+            if live is None:
+                return JSONResponse({"error": "unknown session"}, status_code=404)
+            try:
+                message = live.submit_message(payload.get("text"))
+            except ValueError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=422)
+            except InteractionUnavailableError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=409)
+            return JSONResponse(
+                {
+                    "message_id": message.message_id,
+                    "status": message.status,
+                }
+            )
+
+        @app.delete(
+            "/api/sessions/{session_id:path}/messages/{message_id}",
+        )
+        def api_withdraw_message(
+            session_id: str,
+            message_id: str,
+        ) -> JSONResponse:
+            live = self._session(session_id)
+            if live is None:
+                return JSONResponse({"error": "unknown session"}, status_code=404)
+            try:
+                message = live.withdraw_message(message_id)
+            except UnknownDashboardMessageError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=404)
+            except (DashboardMessageConflictError, InteractionUnavailableError) as exc:
+                return JSONResponse({"error": str(exc)}, status_code=409)
+            return JSONResponse(
+                {
+                    "message_id": message.message_id,
+                    "status": message.status,
+                }
+            )
+
+        @app.post("/api/sessions/{session_id:path}/interrupt")
+        def api_interrupt(session_id: str) -> JSONResponse:
+            live = self._session(session_id)
+            if live is None:
+                return JSONResponse({"error": "unknown session"}, status_code=404)
+            try:
+                result = live.request_interrupt()
+            except InteractionUnavailableError as exc:
+                return JSONResponse({"error": str(exc)}, status_code=409)
+            if result == "noop":
+                return JSONResponse(
+                    {
+                        "status": "noop",
+                        "interrupt_requested": False,
+                    }
+                )
+            return JSONResponse(
+                {
+                    "status": "requested",
+                    "interrupt_requested": True,
+                    "deduplicated": result == "duplicate",
+                },
+                status_code=202,
             )
 
         @app.get("/api/run")
@@ -143,7 +246,11 @@ class DashboardServer:
             return JSONResponse({"events": events})
 
         @app.get("/api/run/frame")
-        def api_frame(run: str, kind: str = "agent", t: str = "") -> Response:
+        def api_frame(
+            run: str,
+            kind: Literal["camera", "wrist"] = "camera",
+            t: str = "",
+        ) -> Response:
             live = self._runs.get(run)
             png = live.frame(kind) if live else None
             if png is None:

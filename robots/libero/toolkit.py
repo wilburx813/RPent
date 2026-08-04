@@ -11,6 +11,7 @@ from functools import partial
 from typing import Any
 
 from robots.libero import tools as libero_tools
+from rpent.dashboard.events import DashboardEventSink, ToolResultEvent
 from rpent.tools.toolkit import Toolkit
 from rpent.utils.logging import get_logger, get_output_dir
 
@@ -26,12 +27,14 @@ class LiberoToolkit(Toolkit):
         self,
         *,
         primitives_kwargs: dict[str, Any],
+        dashboard_events: DashboardEventSink,
         video_path: str | None = None,
-        dashboard: Any = None,
+        save_action_videos: bool = False,
     ) -> None:
-        super().__init__(dashboard=dashboard)
+        super().__init__(dashboard_events=dashboard_events)
         self._next_step: int = 0
         self._video_path: str | None = video_path
+        self._save_action_videos = save_action_videos
         self.init_primitives_clean(primitives_kwargs=primitives_kwargs)
         self._register_libero_tools()
 
@@ -72,8 +75,9 @@ class LiberoToolkit(Toolkit):
 
         self._next_step += 1
         step_idx = self._next_step
-        if self._dashboard is not None:
-            video_dir = libero_tools.artifact_path(get_output_dir(), "action_videos")
+        output_dir = get_output_dir()
+        if self._save_action_videos:
+            video_dir = libero_tools.artifact_path(output_dir, "action_videos")
             video_path = video_dir / f"step_{step_idx:02d}_{name}.mp4"
             try:
                 self._primitives.save_frame_slice(start_frame, str(video_path), fps=20)
@@ -83,7 +87,7 @@ class LiberoToolkit(Toolkit):
                 )
         libero_tools.dump_state(
             self._primitives,
-            str(get_output_dir()),
+            str(output_dir),
             step_idx=step_idx,
             log={"command": command, "result": result_dict, "elapsed_s": elapsed},
         )
@@ -115,8 +119,12 @@ class LiberoToolkit(Toolkit):
         primitives.reset()
         primitives.start_recording()
         libero_tools.dump_state(primitives, str(out_dir), step_idx=0, log=None)
-        if self._dashboard is not None:
-            self._dashboard.on_tool_result("view_driver_state", libero_tools.view_driver_state(0))
+        self._dashboard_events.emit(
+            ToolResultEvent(
+                name="view_driver_state",
+                result=libero_tools.view_driver_state(0),
+            )
+        )
 
         self._primitives = primitives
 
