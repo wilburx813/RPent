@@ -34,23 +34,26 @@ class ToolCancelled(Exception):
 
 
 def readonly(func):
-    """Mark a tool handler as not advancing environment state.
-
-    Tool handlers capture a fresh observation (:meth:`Toolkit.get_env_state`)
-    by default. Apply this marker to observational and file/IO tools that do
-    not move the robot or otherwise change the environment.
-    """
+    """Mark a tool handler as not advancing environment state."""
     func._readonly = True
     return func
 
 
-def _is_readonly(handler: Callable[..., Any]) -> bool:
-    """Whether ``handler`` was marked with :func:`readonly`."""
+def parallel(func):
+    """Mark a read-only tool handler as safe to run with other readers."""
+    func._parallel = True
+    return func
+
+
+def _tool_policy(handler: Callable[..., Any]) -> tuple[bool, bool]:
+    """Return ``(is_parallel, updates_env)`` for a registered handler."""
     target = handler
     while isinstance(target, partial):
         target = target.func
     target = getattr(target, "__func__", target)
-    return bool(getattr(target, "_readonly", False))
+    is_parallel = bool(getattr(target, "_parallel", False))
+    updates_env = not bool(getattr(target, "_readonly", False))
+    return is_parallel, updates_env
 
 
 @dataclass
@@ -143,7 +146,8 @@ class Toolkit:
         ] = {}
         self._dashboard_events = dashboard_events
         self._state = state
-        self._operation_lock = threading.Lock()
+        self._operation_condition = threading.Condition()
+        self._parallel_operations = 0
         self._active_operation: _ToolOperation | None = None
         self._register_common_tools()
 
@@ -164,8 +168,10 @@ class Toolkit:
             spec: Anthropic-shaped tool schema dict (``name``,
                 ``description``, ``input_schema``).
             handler: Callable invoked with the tool's input kwargs; returns
-                a result dict. Decorate read-only handlers with
-                :func:`readonly`; all other handlers capture state.
+                a result dict. Decorate handlers that do not advance the
+                environment with :func:`readonly`, and add :func:`parallel`
+                when they are also safe to run concurrently. All other
+                handlers capture state after execution.
         """
         self._tools[name] = (spec, handler)
 
@@ -200,15 +206,8 @@ class Toolkit:
         if entry is None:
             return ToolResult(name=name, result={"error": f"unknown tool: {name}"})
         _, handler = entry
-
-        with self._operation_lock:
-            if self._active_operation is not None:
-                return ToolResult(
-                    name=name,
-                    result={"error": "another tool operation is still active"},
-                )
-            operation = _ToolOperation()
-            self._active_operation = operation
+        is_parallel, updates_env = _tool_policy(handler)
+        operation = self._begin_operation(parallel=is_parallel)
 
         try:
             started = time.perf_counter()
@@ -232,7 +231,7 @@ class Toolkit:
                 result = {"error": str(e), "traceback": traceback.format_exc()}
                 failed = True
 
-            if not _is_readonly(handler):
+            if updates_env:
                 elapsed_s = round(time.perf_counter() - started, 2)
                 result_dict = result if isinstance(result, dict) else {"value": result}
                 command = {"action": name, **input_dict}
@@ -261,9 +260,30 @@ class Toolkit:
 
             return ToolResult(name=name, result=result)
         finally:
-            with self._operation_lock:
+            self._end_operation(operation)
+
+    def _begin_operation(self, *, parallel: bool) -> _ToolOperation | None:
+        """Wait until this tool can start."""
+        with self._operation_condition:
+            self._operation_condition.wait_for(
+                lambda: self._active_operation is None
+                and (parallel or self._parallel_operations == 0)
+            )
+            if parallel:
+                self._parallel_operations += 1
+                return None
+            operation = _ToolOperation()
+            self._active_operation = operation
+            return operation
+
+    def _end_operation(self, operation: _ToolOperation | None) -> None:
+        with self._operation_condition:
+            if operation is None:
+                self._parallel_operations -= 1
+            else:
                 self._active_operation = None
                 operation.done_event.set()
+            self._operation_condition.notify_all()
 
     def _publish_step(self, record: StepRecord) -> None:
         """Publish one recorded environment step to the dashboard sink."""
@@ -290,8 +310,8 @@ class Toolkit:
     # ------------------------------------------------------------------
 
     def cancel_active_and_wait(self) -> None:
-        """Request cancellation and wait for the active tool to return."""
-        with self._operation_lock:
+        """Request cancellation and wait for the active exclusive tool."""
+        with self._operation_condition:
             operation = self._active_operation
             if operation is None:
                 return
@@ -300,7 +320,7 @@ class Toolkit:
 
     def raise_if_cancelled(self) -> None:
         """Raise at an environment-defined safe cancellation boundary."""
-        with self._operation_lock:
+        with self._operation_condition:
             operation = self._active_operation
         if operation is not None and operation.cancel_event.is_set():
             raise ToolCancelled("tool operation interrupted")

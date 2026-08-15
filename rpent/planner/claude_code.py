@@ -760,7 +760,6 @@ class _Recorder:
 
 def _build_rpent_server(sdk: Any, *, toolkit: Toolkit) -> Any:
     sdk_tools = []
-    tool_execution_lock = asyncio.Lock()
     for spec in toolkit.get_tools_spec():
         name = str(spec["name"])
         description = str(spec.get("description", ""))
@@ -771,12 +770,11 @@ def _build_rpent_server(sdk: Any, *, toolkit: Toolkit) -> Any:
             *,
             tool_name: str = name,
         ) -> dict[str, Any]:
-            async with tool_execution_lock:
-                result = await asyncio.to_thread(
-                    toolkit.execute_tool,
-                    tool_name,
-                    args or {},
-                )
+            result = await asyncio.to_thread(
+                toolkit.execute_tool,
+                tool_name,
+                args or {},
+            )
             return _tool_result_to_mcp(result)
 
         run_tool.__name__ = f"rpent_{name}"

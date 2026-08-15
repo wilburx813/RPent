@@ -51,9 +51,10 @@ primitives 方法，以及调用完成后的状态快照。区别仅在于方法
               self._env.step(build_open_drawer_chunk(dx))
           return {"ok": True, "dx": dx}
 
-   只读工具（``view_env_state``、``back_project``、``segment`` 等）
-     可以使用 :func:`~rpent.tools.toolkit.readonly` 标记，toolkit 会跳过
-     它们的状态捕获，提升性能。
+   不推进环境的工具可使用 :func:`~rpent.tools.toolkit.readonly`
+     标记，toolkit 会跳过状态捕获。如果该工具还可安全并行，例如
+     ``view_env_state`` 和 ``back_project``，再添加
+     :func:`~rpent.tools.toolkit.parallel` 标记。
 
 2. **添加工具定义。** 在 ``robots/<env>/tools.py`` 的 ``TOOLS_SPEC`` 中新增一项：
 
