@@ -9,7 +9,7 @@ the dashboard UI stays in sync with the actual processes.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from rpent.dashboard.events import DashboardEventSink, RuntimeStatusEvent
 from rpent.utils.daemon import ProcessDaemon
@@ -50,7 +50,7 @@ def try_spawn_server(
     except Exception as exc:
         stop_owned_daemons(daemons, dashboard_events)
         dashboard_events.emit(RuntimeStatusEvent(component, "failed", error=exc))
-        raise
+        raise RuntimeError(f"[{component}] spawn failed: {exc}") from exc
 
 
 def try_wait_server(
@@ -60,11 +60,17 @@ def try_wait_server(
     rpc: RpcClient,
     daemon: ProcessDaemon | None,
     timeout_s: float,
-) -> None:
+    *,
+    post_fn: Callable[[], Any] | None = None,
+):
     try:
         wait_for_ready(rpc, daemon=daemon, timeout_s=timeout_s)
+        result = None
+        if post_fn is not None:
+            result = post_fn()
     except Exception as exc:
         stop_owned_daemons(daemons, dashboard_events)
         dashboard_events.emit(RuntimeStatusEvent(component, "failed", error=exc))
-        raise
+        raise RuntimeError(f"[{component}] wait / client connect failed: {exc}") from exc
     dashboard_events.emit(RuntimeStatusEvent(component, "ready"))
+    return result

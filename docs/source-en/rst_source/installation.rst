@@ -28,8 +28,9 @@ the stack you want:
    git clone https://github.com/RLinf/RPent rpent && cd rpent
    pip install -e ".[full]"
 
-``.[full]`` is the default end-to-end stack — the openpi Pi0.5 VLA,
-the LIBERO-PRO simulator, and SAM 3.0 on top of the RLinf runtime.
+``.[full]`` is the default end-to-end stack — the openpi Pi0.5 VLA, the
+LIBERO-PRO and RoboCasa365 simulators, and SAM 3.0 on top of the RLinf
+runtime.
 
 Available extras:
 
@@ -39,7 +40,7 @@ Available extras:
    * - Extra
      - Installs
    * - ``.[full]``
-     - ``rlinf`` + ``openpi`` + ``libero-pro`` + ``sam3`` — the default run stack
+     - ``rlinf`` + ``openpi`` + ``libero-pro`` + ``robocasa`` + ``sam3`` — the default run stack
    * - ``.[libero-pro]``
      - Base LIBERO + LIBERO-PRO simulator only
    * - ``.[libero-plus]``
@@ -50,6 +51,8 @@ Available extras:
      - openpi VLA only
    * - ``.[rlinf]``
      - RLinf runtime only
+   * - ``.[robocasa]``
+     - RoboCasa365 simulator + the RLDX-1 VLA; see :doc:`usage/robocasa`
    * - ``.[sam3]``
      - SAM 3.0 only
 

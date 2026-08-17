@@ -3,14 +3,14 @@ Design reference: ``docs/source-zh/rst_source/development/add_vla.rst``.
 """
 from __future__ import annotations
 
-import threading
 from typing import Any
 
 from rpent.utils.rpc import RpcFacade
+from rpent.utils.rwlock import RWLock
 
 
 class BaseVLAFacade(RpcFacade):
-    """Unified VLA backend base class. Only fixes the shared interface + framework.
+    """Unified VLA backend base class.
 
     Methods subclasses must implement:
         ``predict`` — the subclass performs the actual inference.
@@ -29,14 +29,14 @@ class BaseVLAFacade(RpcFacade):
         evict expired sessions.
     """
 
-    def __init__(self, *, device: str = "cuda"):
+    def __init__(self):
         super().__init__()
-        self.device = device
         # Serializes ``predict`` execution: the model is not thread-safe and
         # concurrent RPC requests must not interleave. Kept at the facade level
         # so it still applies when a subclass overrides ``serve``.
-        self._dispatch_lock = threading.Lock()
+        self._dispatch_lock = RWLock()
         self._rpc: dict[str, Any] = {}
+        self._readonly_methods: set[str] = set()
         self._register_rpc()
 
     # ---- framework ----
@@ -47,10 +47,12 @@ class BaseVLAFacade(RpcFacade):
         handler = self._rpc.get(method)
         if handler is None:
             raise ValueError(f"unknown RPC method: {method!r}")
-        with self._dispatch_lock:
+        if method in self._readonly_methods:
+            with self._dispatch_lock.read():
+                return handler(*args, **kwargs)
+        with self._dispatch_lock.write():
             return handler(*args, **kwargs)
 
     # ---- abstract methods ----
     def predict(self, obs, options):
         raise NotImplementedError
-
