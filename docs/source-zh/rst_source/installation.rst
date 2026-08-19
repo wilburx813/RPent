@@ -27,7 +27,7 @@ RPent 可以通过一条 ``pip install`` 命令完成安装，并提供多种可
    pip install -e ".[full]"
 
 ``.[full]`` 是默认的端到端依赖组合，包括 openpi Pi0.5 VLA、
-LIBERO-PRO 仿真器、SAM 3.0 和 RLinf 运行时。
+LIBERO-PRO 和 RoboCasa365 仿真器、SAM 3.0 和 RLinf 运行时。
 
 可选的依赖组合：
 
@@ -37,7 +37,7 @@ LIBERO-PRO 仿真器、SAM 3.0 和 RLinf 运行时。
    * - Extra
      - 安装内容
    * - ``.[full]``
-     - ``rlinf`` + ``openpi`` + ``libero-pro`` + ``sam3`` —— 默认运行组合
+     - ``rlinf`` + ``openpi`` + ``libero-pro`` + ``robocasa`` + ``sam3`` —— 默认运行组合
    * - ``.[libero-pro]``
      - 仅基础 LIBERO + LIBERO-PRO 仿真器
    * - ``.[libero-plus]``
@@ -48,6 +48,8 @@ LIBERO-PRO 仿真器、SAM 3.0 和 RLinf 运行时。
      - 仅 openpi VLA
    * - ``.[rlinf]``
      - 仅 RLinf 运行时
+   * - ``.[robocasa]``
+     - RoboCasa365 仿真器 + RLDX-1 VLA，详见 :doc:`usage/robocasa`
    * - ``.[sam3]``
      - 仅 SAM 3.0
 

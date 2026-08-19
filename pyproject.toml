@@ -54,28 +54,34 @@ rlinf = [
     "rpent-rlinf",
 ]
 openpi = [
-    "rlinf-openpi",
+    "rpent-openpi @ git+https://github.com/RLinf/openpi.git@rpent",
 ]
 libero = [
-    "rlinf-libero",
+    "rpent-libero>=0.2.0",
     "h5py",
 ]
 libero-pro = [
     "rpent[libero]",
-    "rpent-liberopro",
+    "rpent-liberopro>=0.2.0",
 ]
 libero-plus = [
     "rpent[libero]",
     "rlinf-liberoplus",
-]
-full = [
-    "rpent[rlinf,openpi,libero-pro,sam3]",
 ]
 sam3 = [
     "sam3==0.1.4",
     "torch",
     "torchvision",
     "pillow>=10",
+]
+robocasa = [
+    "rpent[rlinf]",
+    "rlinf-robocasa365",
+    "rlinf-rldx>=1.0.1.post10",
+    "robosuite @ git+https://github.com/RLinf/robosuite.git@rlinf",
+]
+full = [
+    "rpent[rlinf,openpi,libero-pro,sam3,robocasa]",
 ]
 
 [tool.uv]
