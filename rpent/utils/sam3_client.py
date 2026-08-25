@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
 import imageio.v2 as imageio
 import numpy as np
 
-from rpent.utils.rpc import RpcClient
+from rpent.utils.rpc import RpcClient, RpcError
 
 
 @dataclass(frozen=True)
@@ -28,9 +30,12 @@ class Sam3Result:
 class Sam3Client:
     """Client wrapping the SAM3 service over any :class:`RpcClient`."""
 
+    _IMAGE_ID_CACHE_SIZE = 2
+
     def __init__(self, client: RpcClient, *, timeout_s: float = 120.0) -> None:
         self._client = client
         self._timeout_s = timeout_s
+        self._known_image_ids: OrderedDict[str, None] = OrderedDict()
 
     def segment(
         self,
@@ -60,21 +65,36 @@ class Sam3Client:
             image_bytes = buffer.getvalue()
         else:
             image_bytes = bytes(image)
-        body: dict[str, Any] = {
-            "image_base64": base64.b64encode(image_bytes).decode("ascii"),
-            "min_score": float(min_score),
-        }
+        image_id = hashlib.sha256(image_bytes).hexdigest()
+        body: dict[str, Any] = {"min_score": float(min_score)}
+        if image_id in self._known_image_ids:
+            self._known_image_ids.move_to_end(image_id)
+            body["image_id"] = image_id
+        else:
+            body["image_base64"] = base64.b64encode(image_bytes).decode("ascii")
         if has_text:
             body["text_prompt"] = prompt
         else:
             body["point"] = [int(point[0]), int(point[1])]
 
-        payload = self._client.call(
-            "segment",
-            kwargs=body,
-            timeout_s=self._timeout_s,
-        )
-        return self._decode_result(payload)
+        try:
+            payload = self._client.call(
+                "segment", kwargs=body, timeout_s=self._timeout_s
+            )
+        except RpcError as exc:
+            if "image_id" not in body or "unknown image_id:" not in str(exc):
+                raise
+            body.pop("image_id")
+            body["image_base64"] = base64.b64encode(image_bytes).decode("ascii")
+            payload = self._client.call(
+                "segment", kwargs=body, timeout_s=self._timeout_s
+            )
+        result = self._decode_result(payload)
+        if "image_base64" in body:
+            self._known_image_ids[image_id] = None
+            if len(self._known_image_ids) > self._IMAGE_ID_CACHE_SIZE:
+                self._known_image_ids.popitem(last=False)
+        return result
 
     @staticmethod
     def _decode_result(payload: Any) -> Sam3Result:

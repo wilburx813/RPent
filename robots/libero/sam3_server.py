@@ -19,6 +19,7 @@ import io
 import logging
 import os
 import threading
+from collections import OrderedDict
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
@@ -32,17 +33,22 @@ from rpent.utils.rpc import RpcFacade
 
 logger = get_logger("sam3_server")
 
+_IMAGE_CACHE_SIZE = 2
+
 
 class SegmentRequest(BaseModel):
     """Wire request for text or single-point segmentation."""
 
-    image_base64: str
+    image_base64: str | None = None
+    image_id: str | None = None
     text_prompt: str | None = None
     point: list[int] | None = Field(default=None, min_length=2, max_length=2)
     min_score: float = Field(default=0.2, ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def _exactly_one_prompt(self) -> "SegmentRequest":
+        if bool(self.image_base64) == bool(self.image_id):
+            raise ValueError("provide exactly one of image_base64 or image_id")
         has_text = isinstance(self.text_prompt, str) and bool(self.text_prompt.strip())
         has_point = self.point is not None
         if has_text == has_point:
@@ -71,7 +77,7 @@ def _encode_mask_png(mask: np.ndarray) -> str:
 
 
 class Sam3Engine:
-    """Serialize SAM3 inference and cache the latest image backbone state."""
+    """Serialize SAM3 inference with a bounded image-state cache."""
 
     def __init__(
         self,
@@ -86,8 +92,7 @@ class Sam3Engine:
         self._device = device
         self._torch = torch_module
         self._lock = threading.Lock()
-        self._image_digest: str | None = None
-        self._image_state: dict[str, Any] | None = None
+        self._image_states: OrderedDict[str, dict[str, Any]] = OrderedDict()
 
     @classmethod
     def load(cls, checkpoint: str) -> "Sam3Engine":
@@ -125,7 +130,7 @@ class Sam3Engine:
             raise RuntimeError(
                 f"failed to load SAM 3.0 checkpoint: {checkpoint_path}"
             ) from exc
-        processor = Sam3Processor(model, device="cuda", confidence_threshold=0.0)
+        processor = Sam3Processor(model, device="cuda")
         return cls(model, processor, device="cuda", torch_module=torch)
 
     def segment(
@@ -136,21 +141,60 @@ class Sam3Engine:
         point: list[int] | None,
         min_score: float,
     ) -> SegmentResponse:
-        """Run one prompt against the cached latest-image features."""
+        """Run one prompt against the cached image features."""
         with self._lock:
             state = self._state_for_image(image_bytes)
-            height = int(state["original_height"])
-            width = int(state["original_width"])
-            if text_prompt is not None:
-                return self._segment_text(state, text_prompt, min_score)
-            assert point is not None
-            row, col = point
-            if row < 0 or col < 0 or row >= height or col >= width:
-                raise ValueError(
-                    f"point [row, col] {point} is outside image shape "
-                    f"[{height}, {width}]"
-                )
-            return self._segment_point(state, row, col, min_score)
+            return self._segment_state(
+                state,
+                text_prompt=text_prompt,
+                point=point,
+                min_score=min_score,
+            )
+
+    def segment_by_image_id(
+        self,
+        image_id: str,
+        *,
+        text_prompt: str | None,
+        point: list[int] | None,
+        min_score: float,
+    ) -> SegmentResponse:
+        """Run a prompt using an image state already resident on the server."""
+        with self._lock:
+            state = self._image_states.get(image_id)
+            if state is None:
+                raise ValueError(f"unknown image_id: {image_id}")
+            self._image_states.move_to_end(image_id)
+            return self._segment_state(
+                state,
+                text_prompt=text_prompt,
+                point=point,
+                min_score=min_score,
+            )
+
+    def _segment_state(
+        self,
+        image_state: dict[str, Any],
+        *,
+        text_prompt: str | None,
+        point: list[int] | None,
+        min_score: float,
+    ) -> SegmentResponse:
+        state = {
+            **image_state,
+            "backbone_out": image_state["backbone_out"].copy(),
+        }
+        height = int(state["original_height"])
+        width = int(state["original_width"])
+        if text_prompt is not None:
+            return self._segment_text(state, text_prompt, min_score)
+        assert point is not None
+        row, col = point
+        if row < 0 or col < 0 or row >= height or col >= width:
+            raise ValueError(
+                f"point [row, col] {point} is outside image shape [{height}, {width}]"
+            )
+        return self._segment_point(state, row, col, min_score)
 
     def _inference_context(self):
         if self._torch is None or not self._device.startswith("cuda"):
@@ -159,8 +203,10 @@ class Sam3Engine:
 
     def _state_for_image(self, image_bytes: bytes) -> dict[str, Any]:
         digest = hashlib.sha256(image_bytes).hexdigest()
-        if digest == self._image_digest and self._image_state is not None:
-            return self._image_state
+        cached = self._image_states.get(digest)
+        if cached is not None:
+            self._image_states.move_to_end(digest)
+            return cached
         try:
             with Image.open(io.BytesIO(image_bytes)) as source:
                 image = source.convert("RGB")
@@ -168,8 +214,9 @@ class Sam3Engine:
             raise ValueError(f"invalid image data: {exc}") from exc
         with self._inference_context():
             state = self._processor.set_image(image)
-        self._image_digest = digest
-        self._image_state = state
+        self._image_states[digest] = state
+        if len(self._image_states) > _IMAGE_CACHE_SIZE:
+            self._image_states.popitem(last=False)
         return state
 
     def _segment_text(
@@ -178,13 +225,84 @@ class Sam3Engine:
         prompt: str,
         min_score: float,
     ) -> SegmentResponse:
-        with self._inference_context():
-            output = self._processor.set_text_prompt(prompt=prompt, state=state)
-        return self._select_top(
-            masks=output.get("masks"),
-            scores=output.get("scores"),
-            boxes=output.get("boxes"),
-            min_score=min_score,
+        if self._torch is None:
+            raise RuntimeError("SAM3 text inference requires torch")
+        height = int(state["original_height"])
+        width = int(state["original_width"])
+        with self._torch.inference_mode(), self._inference_context():
+            text_output = self._model.backbone.forward_text(
+                [prompt], device=self._device
+            )
+            state["backbone_out"].update(text_output)
+            output = self._model.forward_grounding(
+                backbone_out=state["backbone_out"],
+                find_input=self._processor.find_stage,
+                geometric_prompt=self._model._get_dummy_prompt(),
+                find_target=None,
+            )
+            output = self._model._postprocess_out(output, multimask_output=True)
+
+            scores = output["pred_logits"].sigmoid()
+            presence_score = output["presence_logit_dec"].sigmoid().unsqueeze(1)
+            scores = (scores * presence_score).squeeze(-1).reshape(-1)
+            if scores.numel() == 0:
+                return SegmentResponse(
+                    found=False,
+                    reason="SAM3 returned no candidate",
+                )
+            boxes = output["pred_boxes_xyxy"].reshape(-1, 4)
+            if boxes.shape[0] != scores.shape[0]:
+                raise RuntimeError(
+                    "unexpected SAM3 candidate shapes: "
+                    f"boxes={tuple(boxes.shape)}, scores={tuple(scores.shape)}"
+                )
+            score, x0, y0, x1, y1 = (
+                self._torch.cat((scores[:1], boxes[0]))
+                .detach()
+                .float()
+                .cpu()
+                .tolist()
+            )
+            box = [x0 * width, y0 * height, x1 * width, y1 * height]
+            if score < min_score:
+                return SegmentResponse(
+                    found=False,
+                    score=score,
+                    box=box,
+                    reason=(
+                        f"top score {score:.3f} is below min_score "
+                        f"{min_score:.3f}"
+                    ),
+                )
+
+            masks = output["pred_masks"]
+            masks = masks.reshape(-1, *masks.shape[-2:])
+            if masks.shape[0] != scores.shape[0]:
+                raise RuntimeError(
+                    "unexpected SAM3 candidate shapes: "
+                    f"masks={tuple(masks.shape)}, scores={tuple(scores.shape)}"
+                )
+            mask = self._torch.nn.functional.interpolate(
+                masks[0][None, None],
+                size=(height, width),
+                mode="bilinear",
+                align_corners=False,
+            ).sigmoid()[0, 0]
+            mask = (mask > 0.5).cpu().numpy()
+
+        if not mask.any():
+            return SegmentResponse(
+                found=False,
+                score=score,
+                box=box,
+                reason="SAM3 returned an empty mask",
+            )
+        return SegmentResponse(
+            found=True,
+            score=score,
+            box=box,
+            mask_png_base64=_encode_mask_png(mask),
+            mask_shape=[height, width],
         )
 
     def _segment_point(
@@ -294,27 +412,38 @@ class Sam3Facade(RpcFacade):
 
     def segment(
         self,
-        image_base64: str,
+        image_base64: str | None = None,
         *,
+        image_id: str | None = None,
         text_prompt: str | None = None,
         point: list[int] | None = None,
         min_score: float = 0.2,
     ) -> dict[str, Any]:
         request = SegmentRequest(
             image_base64=image_base64,
+            image_id=image_id,
             text_prompt=text_prompt,
             point=point,
             min_score=min_score,
         )
-        image_bytes = base64.b64decode(request.image_base64, validate=True)
-        if not image_bytes:
-            raise ValueError("image_base64 is empty")
-        response = self._engine.segment(
-            image_bytes,
-            text_prompt=request.text_prompt,
-            point=request.point,
-            min_score=request.min_score,
-        )
+        if request.image_base64 is not None:
+            image_bytes = base64.b64decode(request.image_base64, validate=True)
+            if not image_bytes:
+                raise ValueError("image_base64 is empty")
+            response = self._engine.segment(
+                image_bytes,
+                text_prompt=request.text_prompt,
+                point=request.point,
+                min_score=request.min_score,
+            )
+        else:
+            assert request.image_id is not None
+            response = self._engine.segment_by_image_id(
+                request.image_id,
+                text_prompt=request.text_prompt,
+                point=request.point,
+                min_score=request.min_score,
+            )
         return response.model_dump(exclude_none=True)
 
 

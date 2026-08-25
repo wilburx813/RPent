@@ -11,11 +11,10 @@ from __future__ import annotations
 
 import base64
 import json
-import urllib.error
-import urllib.request
-from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 
+import httpx
 import numpy as np
 
 from rpent.utils.logging import get_logger
@@ -55,7 +54,11 @@ class HttpRpcClient:
 
     def __init__(self, base_url: str) -> None:
         """Initialize with a base URL, e.g. ``"http://127.0.0.1:8080"``."""
-        self._base_url = base_url.rstrip("/")
+        self._client = httpx.Client(base_url=f"{base_url.rstrip('/')}/")
+
+    def close(self) -> None:
+        """Close the reusable HTTP client."""
+        self._client.close()
 
     def call(
         self,
@@ -72,23 +75,16 @@ class HttpRpcClient:
             "kwargs": kwargs or {},
         }
         body = json.dumps(payload, cls=_NumpyEncoder).encode("utf-8")
-        url = f"{self._base_url}/call"
         request_timeout = timeout_s if timeout_s is not None else DEFAULT_TIMEOUT_S
-
-        req = urllib.request.Request(
-            url,
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
         try:
-            with urllib.request.urlopen(req, timeout=request_timeout) as resp:
-                raw = resp.read()
-        except urllib.error.HTTPError as exc:
-            # HTTPError is an OSError subclass; catch first so we can parse
-            # the ok=False body the server sent alongside the status code.
-            raw = exc.read()
-        except OSError as exc:
+            response = self._client.post(
+                "call",
+                content=body,
+                headers={"Content-Type": "application/json"},
+                timeout=request_timeout,
+            )
+            raw = response.content
+        except httpx.RequestError as exc:
             raise RpcError(method, f"HTTP request failed: {exc}") from exc
 
         try:
@@ -126,12 +122,15 @@ class _NumpyEncoder(json.JSONEncoder):
 class _HttpRpcHandler(BaseHTTPRequestHandler):
     """Handles POST /call with JSON-RPC body, dispatches to server.dispatch()."""
 
+    protocol_version = "HTTP/1.1"
+
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         return
 
     def do_POST(self) -> None:
         if self.path != "/call":
             self.send_response(404)
+            self.send_header("Content-Length", "0")
             self.end_headers()
             return
 
@@ -148,13 +147,13 @@ class _HttpRpcHandler(BaseHTTPRequestHandler):
             response = make_error_response(exc)
 
         # Always 200; failures are described inside the body via ok=False.
+        encoded = json.dumps(response, cls=_NumpyEncoder).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         try:
-            self.wfile.write(
-                json.dumps(response, cls=_NumpyEncoder).encode("utf-8")
-            )
+            self.wfile.write(encoded)
         except (BrokenPipeError, ConnectionResetError) as exc:
             # Client went away mid-response — log for visibility and move on.
             logger.debug("rpc http write failed: %s", exc)
