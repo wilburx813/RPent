@@ -5,6 +5,10 @@ RoboTwin
 仿真基准，包含多种桌面操作任务和随机化场景。RPent 通过 RLinf 运行 RoboTwin，
 并使用 LingBot-VLA 生成机器人动作。
 
+.. note::
+
+   当前代码尚未完成 RoboTwin 的完整效果对齐验证，完整验证结果将在后续放出。
+
 安装
 ----
 
@@ -79,14 +83,14 @@ RoboTwin 所需依赖：
 
    # 国内用户在可以加上 HF_ENDPOINT=https://hf-mirror.com,
    # 因为下面的命令运行过程中会下载相关的memory数据
-   rpent --env robotwin \
+   rpent --robot robotwin \
       --task-name beat_block_hammer \
       --seed 100000 \
       --planner codex \
       --model gpt-5.5
 
 修改 ``--task-name`` 可以选择其他任务；标准随机化评测使用的 seed 说明见下方。
-完整参数请运行 ``rpent --env robotwin --help`` 查看。
+完整参数请运行 ``rpent --robot robotwin --help`` 查看。
 
 .. note::
 

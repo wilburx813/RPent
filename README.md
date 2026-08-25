@@ -59,6 +59,7 @@ RPent is built upon three core design principles: **service-oriented, standardiz
           <ul>
             <li>Pi0.5 ✅</li>
             <li>RLDX-1 ✅</li>
+            <li>LingBot-VLA ✅</li>
           </ul>
           <li><b>WAM</b></li>
           <ul>
@@ -70,6 +71,7 @@ RPent is built upon three core design principles: **service-oriented, standardiz
         <ul style="margin-left: 0; padding-left: 16px;">
           <li>LIBERO-PRO ✅</li>
           <li>RoboCasa ✅</li>
+          <li>RoboTwin ✅</li>
         </ul>
       </td>
       <td>
@@ -131,7 +133,7 @@ export LIBERO_TYPE=pro
 
 # Run one task: libero_object_swap, task 2, seed 0, using Claude Code
 # with Claude Opus 4.8.
-rpent --env libero --suite libero_object_swap --task 2 --seed 0 \
+rpent --robot libero --suite libero_object_swap --task 2 --seed 0 \
   --cuda-device 0 --planner claude_code --model claude-opus-4-8
 ```
 
@@ -143,7 +145,7 @@ Evaluation remains the default. Add `--memory-profile local` to evaluate
 against a local global/suite/task memory corpus:
 
 ```bash
-rpent --env libero --suite libero_10_task --task 0 --seed 1 \
+rpent --robot libero --suite libero_10_task --task 0 --seed 1 \
   --planner codex --memory-profile local \
   --memory-dir /path/to/libero-memory
 ```
@@ -152,7 +154,7 @@ Use the same entrypoint with `--explore` to enable resettable attempts, fresh
 planner sessions, memory distillation, and automatic merge:
 
 ```bash
-rpent --env libero --suite libero_10_task --task 0 --seed 0 \
+rpent --robot libero --suite libero_10_task --task 0 --seed 0 \
   --planner api --model anthropic:claude-opus-4-8 \
   --explore --explore-sessions 3 --explore-attempts-per-session 5 \
   --memory-dir /path/to/libero-memory
@@ -166,7 +168,7 @@ The original Hugging Face memory and prompt remain the default
 Add `--interactive` (`-i`) to steer the agent live from your terminal. At the `you>` prompt, the built-in task is pre-filled — press Enter to use it or replace it with your own — then type any message while it runs to steer the agent at the next turn (`/help` lists commands; `/quit` or Ctrl-D ends). Requires an interactive terminal (TTY).
 
 ```bash
-rpent --env libero --suite libero_object_swap --task 2 --seed 0 \
+rpent --robot libero --suite libero_object_swap --task 2 --seed 0 \
   --planner claude_code --model claude-opus-4-8 --interactive
 ```
 
@@ -175,7 +177,7 @@ rpent --env libero --suite libero_object_swap --task 2 --seed 0 \
 Add `--dashboard` to start a local Dashboard and print its URL in the terminal. Open the URL and confirm the configuration; once the services are ready, start a task with `/rpent-task <suite> <task> <seed>`. The page streams agent reasoning, camera views, and the action timeline, and you can submit another task after the current one finishes. Use `--dashboard-language zh-cn` for the Chinese UI.
 
 ```bash
-rpent --env libero --dashboard --dashboard-language zh-cn \
+rpent --robot libero --dashboard --dashboard-language zh-cn \
   --planner claude_code --model claude-opus-4-8
 ```
 
@@ -184,6 +186,11 @@ For more detailed documentation, see the [RPent documentation](https://rpent.rea
 ### RoboCasa
 
 RoboCasa uses a separate entrypoint and install guide. See the [RoboCasa usage docs](https://rpent.readthedocs.io/en/latest/rst_source/usage/robocasa.html) for installation and running instructions.
+
+### RoboTwin
+
+RoboTwin is supported with LingBot-VLA for dual-arm manipulation tasks.
+See the [RoboTwin usage docs](https://rpent.readthedocs.io/en/latest/rst_source/usage/robotwin.html) for installation and running instructions.
 
 ## Key CLI Options
 
@@ -196,7 +203,7 @@ RoboCasa uses a separate entrypoint and install guide. See the [RoboCasa usage d
     </tr>
   </thead>
   <tbody valign="top">
-    <tr><td><code>--env</code></td><td>— (required)</td><td>Environment backend. Currently <code>libero</code>.</td></tr>
+    <tr><td><code>--robot</code></td><td>— (required)</td><td>Robot backend. Currently <code>libero</code>.</td></tr>
     <tr><td><code>--suite</code></td><td>— (required)</td><td>Task suite, e.g. <code>libero_object_task</code>, <code>libero_spatial_swap</code></td></tr>
     <tr><td><code>--task</code></td><td>— (required)</td><td>Task id within the suite</td></tr>
     <tr><td><code>--seed</code></td><td><code>0</code></td><td>Random seed</td></tr>

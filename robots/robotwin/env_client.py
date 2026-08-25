@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from robots.robotwin.env_spec import (
+from robots.robotwin.robot_spec import (
     ROBOTWIN_CAMERA_NAMES,
     ROBOTWIN_READ_TIMEOUT_S,
     ROBOTWIN_STATE_CHANGE_TIMEOUT_S,
@@ -171,8 +171,17 @@ class RoboTwinEnvClient(BaseEnvClient):
         ):
             raise ValueError(f"invalid RoboTwin chunk result: {result!r}")
         obs_field = result[0]
-        if isinstance(obs_field, list):
-            self.last_obs = obs_field[-1]
+        if return_all_frames:
+            if (
+                not isinstance(obs_field, dict)
+                or "frames" not in obs_field
+                or "final" not in obs_field
+            ):
+                raise TypeError(
+                    "RoboTwin return_all_frames=True must return a "
+                    "{'frames','final'} payload, got " + repr(obs_field)
+                )
+            self.last_obs = obs_field["final"]
         else:
             self.last_obs = obs_field
         self.last_info = info
