@@ -1,3 +1,17 @@
+# Copyright 2026 The RPent Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 import json
@@ -37,14 +51,10 @@ def test_merge_cell_publishes_drafts_and_ground_truth_task_pair(tmp_path: Path):
     output_dir.mkdir()
     cell = "10_task_t2_s0"
     _write_suite_draft(memory_dir / "_inbox" / cell, cell)
-    (output_dir / f"{cell}.json").write_text(
-        json.dumps({"libero_terminated": True})
-    )
+    (output_dir / f"{cell}.json").write_text(json.dumps({"libero_terminated": True}))
     (output_dir / f"recipe_{cell}.jsonl").write_text('{"action":"move_to"}\n')
 
-    result = merge_cell(
-        memory_dir=memory_dir, cell_tag=cell, output_dir=output_dir
-    )
+    result = merge_cell(memory_dir=memory_dir, cell_tag=cell, output_dir=output_dir)
 
     assert result["suite"] == 1
     assert result["task"] == 1
@@ -60,14 +70,10 @@ def test_merge_cell_never_publishes_unsolved_task_recipe(tmp_path: Path):
     output_dir = tmp_path / "run"
     output_dir.mkdir()
     cell = "10_swap_t9_s0"
-    (output_dir / f"{cell}.json").write_text(
-        json.dumps({"libero_terminated": False})
-    )
+    (output_dir / f"{cell}.json").write_text(json.dumps({"libero_terminated": False}))
     (output_dir / f"recipe_{cell}.jsonl").write_text('{"action":"move_to"}\n')
 
-    result = merge_cell(
-        memory_dir=memory_dir, cell_tag=cell, output_dir=output_dir
-    )
+    result = merge_cell(memory_dir=memory_dir, cell_tag=cell, output_dir=output_dir)
 
     assert result["task"] == 0
     assert not (memory_dir / "task" / f"{cell}.json").exists()
@@ -94,14 +100,10 @@ Test body.
 """
     )
 
-    result = merge_cell(
-        memory_dir=memory_dir, cell_tag=cell, output_dir=output_dir
-    )
+    result = merge_cell(memory_dir=memory_dir, cell_tag=cell, output_dir=output_dir)
 
     assert result["global"] == 0
-    assert result["skipped"] == [
-        "new_global_strategy.md: evidence must be a mapping"
-    ]
+    assert result["skipped"] == ["new_global_strategy.md: evidence must be a mapping"]
 
 
 def test_merge_cell_is_idempotent_for_same_cell(tmp_path: Path):

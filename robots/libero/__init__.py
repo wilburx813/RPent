@@ -1,4 +1,19 @@
+# Copyright 2026 The RPent Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """LIBERO robot extension."""
+
 from __future__ import annotations
 
 import argparse
@@ -11,8 +26,8 @@ from typing import TYPE_CHECKING, Any
 from robots.libero.prompt_bundle import system_prompt, user_prompt
 from robots.libero.spec import LIBERO_DASHBOARD_SPEC
 from rpent.dashboard.events import DashboardEventSink, RuntimeStatusEvent
-from rpent.robots.robot_spec import RobotSpec, RunConfig
 from rpent.robots.prompt_bundle import PromptBundle
+from rpent.robots.robot_spec import RobotSpec, RunConfig
 from rpent.utils.config import get_memory_dir, get_repo_root
 
 if TYPE_CHECKING:
@@ -72,34 +87,65 @@ def _add_cli_args(parser: argparse.ArgumentParser, use_dashboard: bool) -> None:
     """
     required = not use_dashboard
     parser.add_argument("--max-episode-steps", type=int, default=10000)
-    parser.add_argument("--libero-type", default=None,
-                        choices=["standard", "pro", "plus"],
-                        help="LIBERO variant (auto-routed from suite suffix if not set).")
-    parser.add_argument("--suite", default=None, required=required,
-                        help="e.g. libero_object_task, libero_spatial_swap")
+    parser.add_argument(
+        "--libero-type",
+        default=None,
+        choices=["standard", "pro", "plus"],
+        help="LIBERO variant (auto-routed from suite suffix if not set).",
+    )
+    parser.add_argument(
+        "--suite",
+        default=None,
+        required=required,
+        help="e.g. libero_object_task, libero_spatial_swap",
+    )
     parser.add_argument("--task", type=int, default=None, required=required)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--auto-merge-memory",
-                        action=argparse.BooleanOptionalAction, default=True,
-                        help="Merge exploration output into layered memory (default: enabled).")
-    parser.add_argument("--explore-attempts-per-session", type=int, default=5,
-                        help="Attempts per exploration session (default: 5; 0 disables limit).")
-    parser.add_argument("--explore-sessions", type=int, default=3,
-                        help="Independent planner sessions per exploration run (default: 3).")
-    parser.add_argument("--env-endpoint", default=None,
-                        help="[protocol://]host:port of an existing env_server "
-                             "(protocol=http|socket, defaults to http). "
-                             "If unset, a local env_server is spawned.")
-    parser.add_argument("--vla-endpoint", default=None,
-                        help="[protocol://]host:port of an existing vla_server "
-                             "(protocol=http|socket, defaults to http). "
-                             "If unset, a local vla_server is spawned.")
-    parser.add_argument("--sam3-endpoint", default=None,
-                        help="[protocol://]host:port of an existing SAM3 server "
-                             "(protocol=http|socket, defaults to http). "
-                             "If unset, a local SAM3 server is spawned.")
-    parser.add_argument("--cuda-device", type=int, default=None,
-                        help="GPU device to expose via CUDA_VISIBLE_DEVICES.")
+    parser.add_argument(
+        "--auto-merge-memory",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Merge exploration output into layered memory (default: enabled).",
+    )
+    parser.add_argument(
+        "--explore-attempts-per-session",
+        type=int,
+        default=5,
+        help="Attempts per exploration session (default: 5; 0 disables limit).",
+    )
+    parser.add_argument(
+        "--explore-sessions",
+        type=int,
+        default=3,
+        help="Independent planner sessions per exploration run (default: 3).",
+    )
+    parser.add_argument(
+        "--env-endpoint",
+        default=None,
+        help="[protocol://]host:port of an existing env_server "
+        "(protocol=http|socket, defaults to http). "
+        "If unset, a local env_server is spawned.",
+    )
+    parser.add_argument(
+        "--vla-endpoint",
+        default=None,
+        help="[protocol://]host:port of an existing vla_server "
+        "(protocol=http|socket, defaults to http). "
+        "If unset, a local vla_server is spawned.",
+    )
+    parser.add_argument(
+        "--sam3-endpoint",
+        default=None,
+        help="[protocol://]host:port of an existing SAM3 server "
+        "(protocol=http|socket, defaults to http). "
+        "If unset, a local SAM3 server is spawned.",
+    )
+    parser.add_argument(
+        "--cuda-device",
+        type=int,
+        default=None,
+        help="GPU device to expose via CUDA_VISIBLE_DEVICES.",
+    )
 
 
 def _parse_config(args: argparse.Namespace) -> RunConfig:
@@ -154,7 +200,11 @@ def _parse_config(args: argparse.Namespace) -> RunConfig:
     output_dir = args.output_dir
     if output_dir is None:
         timestamp = datetime.now().strftime("%Y%m%d-%H:%M:%S")
-        output_dir = get_repo_root() / "logs" / f"{timestamp}_{args.suite}_t{args.task}_s{args.seed}"
+        output_dir = (
+            get_repo_root()
+            / "logs"
+            / f"{timestamp}_{args.suite}_t{args.task}_s{args.seed}"
+        )
     output_dir = Path(output_dir)
 
     return RunConfig(
@@ -212,7 +262,9 @@ def init_task_runtime(
 
     owned_daemons: list[ProcessDaemon] = []
     libero_type = args.libero_type or get_libero_type()
-    cuda_args = ["--cuda-device", str(args.cuda_device)] if args.cuda_device is not None else []
+    cuda_args = (
+        ["--cuda-device", str(args.cuda_device)] if args.cuda_device is not None else []
+    )
 
     dashboard_events.emit(RuntimeStatusEvent("env", "starting"))
     try:
@@ -224,13 +276,20 @@ def init_task_runtime(
                 cmd=[
                     sys.executable,
                     str(get_repo_root() / "robots" / "libero" / "env_server.py"),
-                    "--suite", args.suite,
-                    "--task", str(args.task),
-                    "--seed", str(args.seed),
-                    "--max-episode-steps", str(args.max_episode_steps),
-                    "--transport", "http",
-                    "--host", host,
-                    "--port", str(port),
+                    "--suite",
+                    args.suite,
+                    "--task",
+                    str(args.task),
+                    "--seed",
+                    str(args.seed),
+                    "--max-episode-steps",
+                    str(args.max_episode_steps),
+                    "--transport",
+                    "http",
+                    "--host",
+                    host,
+                    "--port",
+                    str(port),
                     "--parent-watch",
                     *cuda_args,
                 ],
@@ -291,9 +350,7 @@ def init_shared_runtime(
 
     owned_daemons: list[ProcessDaemon] = []
     cuda_args = (
-        ["--cuda-device", str(args.cuda_device)]
-        if args.cuda_device is not None
-        else []
+        ["--cuda-device", str(args.cuda_device)] if args.cuda_device is not None else []
     )
 
     # --- vla_server --------------------------------------------------------
@@ -307,9 +364,12 @@ def init_shared_runtime(
                 cmd=[
                     sys.executable,
                     str(get_repo_root() / "robots" / "libero" / "vla_server.py"),
-                    "--transport", "http",
-                    "--host", host,
-                    "--port", str(port),
+                    "--transport",
+                    "http",
+                    "--host",
+                    host,
+                    "--port",
+                    str(port),
                     "--parent-watch",
                     *cuda_args,
                 ],
@@ -345,9 +405,12 @@ def init_shared_runtime(
                 cmd=[
                     sys.executable,
                     str(get_repo_root() / "robots" / "libero" / "sam3_server.py"),
-                    "--transport", "http",
-                    "--host", host,
-                    "--port", str(port),
+                    "--transport",
+                    "http",
+                    "--host",
+                    host,
+                    "--port",
+                    str(port),
                     "--parent-watch",
                     *cuda_args,
                 ],
@@ -420,7 +483,9 @@ def _init_runtime(
 
     daemons: list[ProcessDaemon] = []
     libero_type = args.libero_type or get_libero_type()
-    cuda_args = ["--cuda-device", str(args.cuda_device)] if args.cuda_device is not None else []
+    cuda_args = (
+        ["--cuda-device", str(args.cuda_device)] if args.cuda_device is not None else []
+    )
 
     # --- env_server --------------------------------------------------------
     dashboard_events.emit(RuntimeStatusEvent("env", "starting"))
@@ -433,13 +498,20 @@ def _init_runtime(
                 cmd=[
                     sys.executable,
                     str(get_repo_root() / "robots" / "libero" / "env_server.py"),
-                    "--suite", args.suite,
-                    "--task", str(args.task),
-                    "--seed", str(args.seed),
-                    "--max-episode-steps", str(args.max_episode_steps),
-                    "--transport", "http",
-                    "--host", host,
-                    "--port", str(port),
+                    "--suite",
+                    args.suite,
+                    "--task",
+                    str(args.task),
+                    "--seed",
+                    str(args.seed),
+                    "--max-episode-steps",
+                    str(args.max_episode_steps),
+                    "--transport",
+                    "http",
+                    "--host",
+                    host,
+                    "--port",
+                    str(port),
                     "--parent-watch",
                     *cuda_args,
                 ],
@@ -478,9 +550,12 @@ def _init_runtime(
                 cmd=[
                     sys.executable,
                     str(get_repo_root() / "robots" / "libero" / "vla_server.py"),
-                    "--transport", "http",
-                    "--host", host,
-                    "--port", str(port),
+                    "--transport",
+                    "http",
+                    "--host",
+                    host,
+                    "--port",
+                    str(port),
                     "--parent-watch",
                     *cuda_args,
                 ],
@@ -515,9 +590,12 @@ def _init_runtime(
                 cmd=[
                     sys.executable,
                     str(get_repo_root() / "robots" / "libero" / "sam3_server.py"),
-                    "--transport", "http",
-                    "--host", host,
-                    "--port", str(port),
+                    "--transport",
+                    "http",
+                    "--host",
+                    host,
+                    "--port",
+                    str(port),
                     "--parent-watch",
                     *cuda_args,
                 ],

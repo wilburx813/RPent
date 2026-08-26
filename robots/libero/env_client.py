@@ -1,3 +1,17 @@
+# Copyright 2026 The RPent Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """LIBERO env client that forwards calls over an RPC transport.
 
 Lives in :mod:`robots.libero` because the methods exposed
@@ -5,6 +19,7 @@ here (``raw_obs`` / ``render_camera`` / ``cached_image`` / …)
 reference LIBERO-specific obs dict keys and camera names. The generic
 transport layer lives in :mod:`rpent.utils.socket_rpc`.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -68,7 +83,9 @@ class LiberoEnvClient:
         self.check_done(term, trunc)
         return ret
 
-    def chunk_step(self, actions, *, return_all_frames: bool | None = None) -> tuple[Any, Any, Any, Any, Any]:
+    def chunk_step(
+        self, actions, *, return_all_frames: bool | None = None
+    ) -> tuple[Any, Any, Any, Any, Any]:
         """Run an action chunk in one RPC. Returns the 5-positional tuple
         ``(obs_or_list, reward, terminated, truncated, info)``.
 
@@ -131,6 +148,4 @@ class LiberoEnvClient:
         )
 
     def cached_image(self) -> np.ndarray | None:
-        return self._client.call(
-            "env.cached_image", timeout_s=_TIMEOUT_S["default"]
-        )
+        return self._client.call("env.cached_image", timeout_s=_TIMEOUT_S["default"])

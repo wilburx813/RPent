@@ -1,4 +1,19 @@
+# Copyright 2026 The RPent Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """RPC server wrapping a single-env LIBERO environment."""
+
 from __future__ import annotations
 
 import argparse
@@ -19,8 +34,9 @@ from rpent.utils.rpc import RpcFacade
 # MuJoCo env vars must be set BEFORE importing anything that touches MuJoCo.
 os.environ.setdefault("MUJOCO_GL", "egl")
 os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
-assert "mujoco" not in sys.modules, \
+assert "mujoco" not in sys.modules, (
     "mujoco must not be imported before MUJOCO_GL/PYOPENGL_PLATFORM are set"
+)
 
 logger = get_logger("env_server")
 
@@ -79,19 +95,27 @@ def build_env_cfg(
                 # from depth + camera calibration
                 "camera_depths": True,
                 "horizon": max_episode_steps,
-                **({"robots": [os.environ["LIBERO_ROBOT_BASE"]]}
-                   if os.environ.get("LIBERO_ROBOT_BASE") else {}),
+                **(
+                    {"robots": [os.environ["LIBERO_ROBOT_BASE"]]}
+                    if os.environ.get("LIBERO_ROBOT_BASE")
+                    else {}
+                ),
             },
         }
     )
     return cfg
 
 
-def make_env(task_id: int, seed: int, suite_name: str = "libero_spatial",
-             max_episode_steps: int = 10000) -> LiberoEnv:
+def make_env(
+    task_id: int,
+    seed: int,
+    suite_name: str = "libero_spatial",
+    max_episode_steps: int = 10000,
+) -> LiberoEnv:
     """Build a single-env LiberoEnv pinned to ``task_id`` / ``seed``."""
     from rlinf.envs.libero.libero_env import LiberoEnv
     from rlinf.envs.libero.utils import benchmark as _bench_mod
+
     suite = _bench_mod.get_benchmark(suite_name)()
     first_id = sum(len(suite.get_task_init_states(t)) for t in range(task_id))
     trials = len(suite.get_task_init_states(task_id))
@@ -102,8 +126,9 @@ def make_env(task_id: int, seed: int, suite_name: str = "libero_spatial",
         seed=seed,
         max_episode_steps=max_episode_steps,
     )
-    return LiberoEnv(cfg=cfg, num_envs=1, seed_offset=0,
-                     total_num_processes=1, worker_info=None)
+    return LiberoEnv(
+        cfg=cfg, num_envs=1, seed_offset=0, total_num_processes=1, worker_info=None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +173,7 @@ class LiberoEnvFacade(RpcFacade):
 
     def _dispatch(self, method: str, args: tuple, kwargs: dict) -> Any:
         if method.startswith("env."):
-            attr = method[len("env."):]
+            attr = method[len("env.") :]
             try:
                 return getattr(self, attr)(*args, **kwargs)
             except Exception as e:
@@ -244,7 +269,7 @@ class LiberoEnvFacade(RpcFacade):
         return _to_numpy_tree(self._env.current_raw_obs[self._env_idx])
 
     def get_env_meta(self) -> dict:
-        """Return the meta info this server was launched with. """
+        """Return the meta info this server was launched with."""
         return dict(self._meta)
 
     def render_camera(
@@ -299,11 +324,18 @@ def main():
     p.add_argument("--task", type=int, default=9)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--max-episode-steps", type=int, default=10000)
-    p.add_argument("--parent-watch", action="store_true",
-                   help="watch parent process via stdin pipe and exit when it dies")
-    p.add_argument("--cuda-device", type=int, default=None,
-                   help="GPU device to pin MuJoCo EGL rendering and the torch "
-                        "default device to (physical CUDA ordinal).")
+    p.add_argument(
+        "--parent-watch",
+        action="store_true",
+        help="watch parent process via stdin pipe and exit when it dies",
+    )
+    p.add_argument(
+        "--cuda-device",
+        type=int,
+        default=None,
+        help="GPU device to pin MuJoCo EGL rendering and the torch "
+        "default device to (physical CUDA ordinal).",
+    )
     args = p.parse_args()
 
     if args.cuda_device is not None:
@@ -323,16 +355,23 @@ def main():
                 "CUDA_VISIBLE_DEVICES=%s is set; clearing it and pinning via "
                 "MUJOCO_EGL_DEVICE_ID + torch.cuda.set_device(--cuda-device=%s) "
                 "instead (robosuite's CVD assertion is incompatible with EGL<->CUDA mapping)",
-                prev, args.cuda_device,
+                prev,
+                args.cuda_device,
             )
             os.environ.pop("CUDA_VISIBLE_DEVICES", None)
         from rpent.utils.egl import configure_egl_device
+
         configure_egl_device(args.cuda_device)
         import torch
+
         torch.cuda.set_device(args.cuda_device)
 
-    raw_env = make_env(args.task, args.seed, suite_name=args.suite,
-                       max_episode_steps=args.max_episode_steps)
+    raw_env = make_env(
+        args.task,
+        args.seed,
+        suite_name=args.suite,
+        max_episode_steps=args.max_episode_steps,
+    )
     facade = LiberoEnvFacade(
         raw_env,
         meta={

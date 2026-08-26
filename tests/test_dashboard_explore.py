@@ -1,3 +1,17 @@
+# Copyright 2026 The RPent Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
@@ -73,7 +87,9 @@ def test_dashboard_keeps_continuous_steps_across_toolkits(tmp_path):
     )
 
 
-def test_dashboard_explore_rebuilds_planner_and_toolkit_per_session(tmp_path, monkeypatch):
+def test_dashboard_explore_rebuilds_planner_and_toolkit_per_session(
+    tmp_path, monkeypatch
+):
     dashboard = _dashboard_state(tmp_path)
     claimed = SimpleNamespace(number=1, request={}, output_dir=tmp_path / "task")
     toolkit_calls = []
@@ -240,6 +256,5 @@ def test_dashboard_finalization_failure_is_non_fatal(tmp_path, monkeypatch):
 
     assert error is None
     assert dashboard.snapshot()["control_feedback"][-1] == (
-        "Task succeeded, but memory finalization failed: "
-        "AttributeError: invalid memory"
+        "Task succeeded, but memory finalization failed: AttributeError: invalid memory"
     )

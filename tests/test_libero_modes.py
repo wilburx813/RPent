@@ -1,3 +1,17 @@
+# Copyright 2026 The RPent Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 import json
@@ -77,7 +91,10 @@ def test_prompt_profiles_are_isolated(tmp_path):
     explore_config = spec.parse_config(explore_args)
     explore_prompt = spec.prompts.render(
         "system",
-        variables={**explore_config.prompt_vars, "output_dir": explore_config.output_dir},
+        variables={
+            **explore_config.prompt_vars,
+            "output_dir": explore_config.output_dir,
+        },
     )
 
     assert "LOCAL SUITE + TASK + GLOBAL" not in hf_prompt
@@ -121,9 +138,7 @@ def test_explore_finalizer_automatically_merges_task_pair(tmp_path):
     )
     config = spec.parse_config(args)
     cell = config.recipe_tag
-    (output_dir / f"{cell}.json").write_text(
-        json.dumps({"libero_terminated": True})
-    )
+    (output_dir / f"{cell}.json").write_text(json.dumps({"libero_terminated": True}))
     (output_dir / f"recipe_{cell}.jsonl").write_text('{"action":"move_to"}\n')
 
     result = spec.finalize_run(args, config)
@@ -192,7 +207,9 @@ def test_successful_session_recipe_is_published_at_run_root(tmp_path, monkeypatc
         call.update(state=state, recipe_tag=recipe_tag, output_dir=output_dir)
         return recipe_name
 
-    monkeypatch.setattr("robots.libero.toolkit.libero_tools.write_recipe_from_states", write_recipe)
+    monkeypatch.setattr(
+        "robots.libero.toolkit.libero_tools.write_recipe_from_states", write_recipe
+    )
 
     assert toolkit.write_recipe("10_task_t0_s0") == recipe_name
     assert call == {
