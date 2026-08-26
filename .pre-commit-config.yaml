@@ -11,11 +11,9 @@ repos:
         stages: [pre-commit]
 
   - repo: https://github.com/commit-check/commit-check
-    rev: "v2.11.1"
+    rev: "v0.10.2"
     hooks:
       - id: check-message
         stages: [commit-msg]
-      - id: check-author-name
-        stages: [commit-msg]
-      - id: check-author-email
+      - id: check-commit-signoff
         stages: [commit-msg]

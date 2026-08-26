@@ -93,9 +93,9 @@ it, the repository baseline must be made clean:
   and the creation year for new files;
 - keep Ruff lint and formatting hooks in the `pre-commit` stage, where they run
   automatically for local commits and in the all-files CI job;
-- put `check-message`, `check-author-name`, and `check-author-email` in the
-  `commit-msg` stage, and configure local installation for both the
-  `pre-commit` and `commit-msg` hook types;
+- follow RLinf's commit policy by putting `check-message` and
+  `check-commit-signoff` in the `commit-msg` stage, and configure local
+  installation for both the `pre-commit` and `commit-msg` hook types;
 - keep the CI command on the default `pre-commit` stage so that
   `pre-commit run --all-files` checks repository content without inspecting the
   CI runner's commit message or Git identity.
@@ -313,6 +313,8 @@ Add a concise root-level `CONTRIBUTING.md` and a short pull-request template wit
 the workflows. They should cover:
 
 - exact commands for running pre-commit and tests locally;
+- the Conventional Commit and `Signed-off-by` policy, including use of
+  `git commit -s`;
 - test layout and naming;
 - source-checkout-only operation and heavy dependency isolation;
 - expected tests for features, bug fixes, refactors, and intentional contract
@@ -336,9 +338,9 @@ Use two pull requests.
 - resolve the repository-wide lint findings;
 - apply Ruff formatting;
 - add/fix the Apache copyright headers;
-- keep Ruff in the `pre-commit` stage, move all commit-message and
-  author-metadata checks to `commit-msg`, and configure both hook types for
-  local installation so the CI all-files run checks repository content only;
+- keep Ruff in the `pre-commit` stage, put commit-message and signoff checks in
+  `commit-msg`, and configure both hook types for local installation so the CI
+  all-files run checks repository content only;
 - preserve behavior and defer semantic product changes for explicit discussion;
 - self-review the full mechanical diff before merging.
 
