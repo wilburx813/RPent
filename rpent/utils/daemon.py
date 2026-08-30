@@ -1,3 +1,17 @@
+# Copyright 2026 The RPent Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Subprocess RPC servers: spawn (parent side), death-watch (child side)."""
 
 from __future__ import annotations
@@ -63,13 +77,14 @@ class ProcessDaemon:
         name: str,
         cmd: list[str],
         *,
-        env: dict[str, str] | None = None,
+        env_overrides: dict[str, str] | None = None,
         log_path: str | None = None,
         cwd: str | None = None,
     ) -> None:
         self.name = name
         self.cmd = cmd
-        self.subprocess_env = env or os.environ.copy()
+        self.subprocess_env = os.environ.copy()
+        self.subprocess_env.update(env_overrides or {})
         self.log_path = log_path
         self.cwd = cwd
         self._proc: subprocess.Popen | None = None

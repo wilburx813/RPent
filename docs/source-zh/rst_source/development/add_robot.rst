@@ -16,10 +16,9 @@ RPent 的整体进程划分、服务职责和通信方式见 :doc:`系统设计 
    :ref:`添加一个 VLA（或其他基于模型的原语）<add-primitive-model-based>`。
 3. :ref:`定义 prompt <add-robot-prompts>`。
 4. :ref:`实现 toolkit 和 primitives <add-robot-toolkit>`。
-5. :ref:`注册机器人参数并生成 RunConfig <add-robot-config>`。
-6. 实现 :ref:`runtime 钩子 <add-robot-runtime>`：普通 CLI 使用完整 runtime；
-   如果机器人支持 Dashboard 任务控制，再按 Session/TaskRun 生命周期实现仅供
-   Dashboard 使用的拆分钩子。
+5. :ref:`注册环境参数并生成 RunConfig <add-robot-config>`。
+6. 实现 :ref:`runtime 钩子 <add-robot-runtime>`：同一个钩子既能为普通 CLI
+   初始化完整 runtime，也能为 Dashboard 初始化指定的 component 子集。
 
 .. _add-robot-entry:
 
@@ -31,25 +30,32 @@ RPent 的整体进程划分、服务职责和通信方式见 :doc:`系统设计 
 .. code-block:: text
 
    robots/myrobot/
-       __init__.py            # 入口 —— get_robot_spec() / get_toolkit() 工厂
+       __init__.py            # 包入口，仅重导出两个工厂
+       robot_spec.py          # RobotSpec、工厂、Dashboard 描述和 runtime 钩子
        env_client.py          # MyEnvClient —— agent 侧 RPC client (§1)
        prompt_bundle.py       # system()/user() prompt 工厂              (§2)
        toolkit.py             # MyRobotToolkit + primitives + 工具定义     (§3)
        env_server.py          # 环境侧 facade + RPC 服务                 (§1)
        vla_server.py          # （可选）VLA 模型服务
-       spec.py                # （可选）Dashboard 描述
 
-``__init__.py`` 是机器人包的入口。``rpent/robots/base.py`` 中的注册表会按需导入
-``robots.<name>``，并调用其中的两个工厂函数：
+``__init__.py`` 是机器人包入口，应保持精简，仅重导出 ``robot_spec.py`` 中实现的
+工厂。``rpent/robots/base.py`` 中的注册表会按需导入 ``robots.<name>``，并调用
+这两个函数：
 
 .. code-block:: python
 
    # robots/myrobot/__init__.py
+   from robots.myrobot.robot_spec import get_robot_spec, get_toolkit
+
+   # robots/myrobot/robot_spec.py
    from rpent.dashboard.events import DashboardEventSink
+   from rpent.memory import MemoryManager
    from rpent.robots.robot_spec import RobotSpec, RunConfig
    from rpent.robots.prompt_bundle import PromptBundle
+   from rpent.utils.config import get_memory_dir
    from robots.myrobot.prompt_bundle import system_prompt, user_prompt
-   from robots.myrobot.spec import MYROBOT_DASHBOARD_SPEC
+
+   MYROBOT_DASHBOARD_SPEC = {...}
 
    def get_robot_spec() -> RobotSpec:
        return RobotSpec(
@@ -57,18 +63,23 @@ RPent 的整体进程划分、服务职责和通信方式见 :doc:`系统设计 
            prompts=PromptBundle(system=system_prompt, user=user_prompt),
            add_cli_args=_add_cli_args,
            parse_config=_parse_config,
-           init_shared_runtime=_init_shared_runtime,
-           init_task_runtime=_init_task_runtime,
            init_runtime=_init_runtime,
            dashboard=MYROBOT_DASHBOARD_SPEC,
        )
 
-   def get_toolkit(*, primitives_kwargs, dashboard_events: DashboardEventSink, video_path=None):
+   def get_toolkit(
+       *,
+       primitives_kwargs,
+       dashboard_events: DashboardEventSink,
+       config: RunConfig,
+   ):
        from robots.myrobot.toolkit import MyRobotToolkit
        return MyRobotToolkit(
            primitives_kwargs=primitives_kwargs,
            dashboard_events=dashboard_events,
-           video_path=video_path,
+           memory=MemoryManager(
+               root=config.prompt_vars.get("memory_dir") or get_memory_dir("myrobot"),
+           ),
        )
 
    def _add_cli_args(parser, use_dashboard) -> None:
@@ -79,32 +90,28 @@ RPent 的整体进程划分、服务职责和通信方式见 :doc:`系统设计 
        """校验最终的 args，返回 RunConfig。见第 4 节。"""
        ...
 
-   def _init_runtime(args, output_dir, dashboard_events: DashboardEventSink):
-       """仅普通 CLI 使用：初始化完整 runtime。
+   def _init_runtime(
+       args,
+       output_dir,
+       dashboard_events: DashboardEventSink,
+       components: set[str] | None,
+   ):
+       """初始化全部 runtime components，或只初始化指定子集。
 
        返回 (daemons, primitives_kwargs)。见第 5 节。
        """
        ...
 
-   def _init_shared_runtime(args, output_dir, dashboard_events: DashboardEventSink):
-       """仅 Dashboard 使用：初始化由 Session 持有并复用的服务。"""
-       ...
-
-   def _init_task_runtime(args, output_dir, dashboard_events: DashboardEventSink):
-       """仅 Dashboard 使用：为每个 TaskRun 初始化全新的服务。"""
-       ...
-
-``dashboard`` 是可选项；机器人不支持 Dashboard 控制时保持为 ``None``。支持时，
+``dashboard`` 是可选项；环境不支持 Dashboard 控制时保持为 ``None``。支持时，
 在机器人包中定义该 spec：其中 ``task`` 描述命令、校验字段、展示模板和输出目录
-slug，``runtime_components`` 与 ``frame_channels`` 描述前端展示的机器人专用服务行
-和相机视图。完整结构参考 ``robots/libero/spec.py``。
+slug，``runtime_components`` 与 ``frame_channels`` 描述前端展示的环境专用服务行
+和相机视图。完整结构参考 ``robots/libero/robot_spec.py``。
 
 ``_resolve_robot(name)`` 通过 ``importlib.import_module(f"robots.{name}")``
 动态加载机器人包。因此，只需将机器人包放在 ``robots/`` 下，无需维护中央注册列表。
 
 下文依次说明这些模块需要实现的内容。``_add_cli_args`` 和 ``_parse_config``
-见第 4 节，三个 runtime 钩子见第 5 节。Dashboard spec 只由 Dashboard runner
-使用。
+见第 4 节，runtime 钩子见第 5 节。Dashboard spec 只由 Dashboard runner 使用。
 
 .. _add-robot-env-rpc:
 
@@ -117,58 +124,69 @@ slug，``runtime_components`` 与 ``frame_channels`` 描述前端展示的机器
 1.1 Env client（agent 侧）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-基础接口包含 ``reset`` 和 ``step`` 两个 Gym 风格的方法；可以根据机器人需要
-添加其他方法（LIBERO 增加了 ``chunk_step``、``render_camera``、
-``get_camera_meta``、``cached_image`` 等）。每个方法通过
-``RpcClient.call("<rpc-name>", args=..., kwargs=...)`` 转发，并设置单独的
-超时时间。方法名需要保持稳定，因为服务端会按名称分派请求。
+继承 :class:`rpent.robots.components.env_client_base.BaseEnvClient`。它已经负责启动时校验
+``env.get_env_meta``、执行首次 reset、缓存 ``last_obs``，并实现公共的
+``reset``、``step`` 和 ``chunk_step`` RPC。子类只需增加环境专用方法（LIBERO
+增加了 ``render_camera``、``get_camera_meta``、``get_task_language`` 等）；扩展方法
+需要独立超时时，再扩展超时表。RPC 名称需要保持稳定，因为服务端 facade 会显式
+注册每个名称。
 
 .. code-block:: python
 
-   class MyEnvClient:
-       def __init__(self, client: RpcClient, *, return_all_frames: bool = False):
-           self._client = client
-           self.return_all_frames = return_all_frames
+   from rpent.robots.components.env_client_base import BaseEnvClient
 
-       def reset(self):
-           return self._client.call("env.reset", timeout_s=120.0)
+   class MyEnvClient(BaseEnvClient):
+       _TIMEOUT_S = {
+           **BaseEnvClient._TIMEOUT_S,
+           "env.render_camera": 120.0,
+       }
 
-       def step(self, action):
-           return self._client.call("env.step", args=(action,), timeout_s=60.0)
-       # ... 根据 env 需要添加其他方法
+       def render_camera(self, camera_name):
+           return self._client.call(
+               "env.render_camera",
+               args=(camera_name,),
+               timeout_s=self._TIMEOUT_S["env.render_camera"],
+           )
+
+   env = MyEnvClient(rpc_client, expected_meta=expected_meta)
 
 1.2 Env server（环境侧）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 在 ``env_server`` 中定义与 client API 对应的 facade 类，例如
-``MyEnvFacade``。该类继承 :class:`rpent.utils.rpc.RpcFacade`，实现
-``_dispatch(method, args, kwargs)``，将 ``env.*`` 请求分派给对应方法，再通过
-``self.serve(...)`` 启动服务。方法接收与 client 一致的位置参数和关键字参数，
-返回可 pickle 的值（使用 numpy，不要返回 torch；agent 进程不导入 torch）。
+``MyEnvFacade``。该类继承
+:class:`rpent.robots.components.env_facade_base.BaseEnvFacade`；基类已提供公共 RPC 路由和
+读写分派锁。子类实现公共环境方法，并通过 ``_register_rpc`` 增加环境专用路由。
+方法接收与 client 一致的位置参数和关键字参数，返回传输层支持的 Python / NumPy
+值（不要返回 torch；agent 进程不导入 torch）。
 
 .. code-block:: python
 
-   from rpent.utils.rpc import RpcFacade
+   from rpent.robots.components.env_facade_base import BaseEnvFacade
 
-   class MyEnvFacade(RpcFacade):
+   class MyEnvFacade(BaseEnvFacade):
        def __init__(self, env, meta):
-           super().__init__()
            self._env = env
-           self._meta = meta
+           super().__init__()
 
-       def _dispatch(self, method, args, kwargs):
-           if method.startswith("env."):
-               return getattr(self, method[len("env."):])(*args, **kwargs)
-           raise ValueError(f"unknown RPC method: {method!r}")
+       def _register_rpc(self):
+           super()._register_rpc()
+           # 自定义方法需额外注册
+           self._rpc["env.custom_method"] = self.custom_method
 
+       # BaseEnvFacade 要求的抽象方法必须实现
        def reset(self): ...
        def step(self, action): ...
+
+       def custom_method(self, arg): ...
 
    facade = MyEnvFacade(env, meta)
    facade.serve(transport="http", host=host, port=port)
 
-``RpcFacade.serve`` 负责绑定传输方式（HTTP 或 socket）、提供 ``healthz`` 和
-``shutdown`` 方法、检测父进程退出并执行资源清理；这里只需实现业务方法。
+``BaseEnvFacade`` 通过 ``_register_rpc`` 注册公共路由，并使用读写锁串行化会改变
+状态的调用。只有确认某个扩展路由可以安全地与其他读操作并发时，才把它加入
+``_readonly_methods``。继承的 ``RpcFacade.serve`` 负责绑定传输方式（HTTP 或
+socket）、提供 ``healthz`` 和 ``shutdown``、检测父进程退出并执行资源清理。
 
 .. _add-robot-prompts:
 
@@ -176,7 +194,7 @@ slug，``runtime_components`` 与 ``frame_channels`` 描述前端展示的机器
 -----------------------
 
 定义 ``system_prompt()`` 和 ``user_prompt()`` 两个 prompt 工厂，并在机器人的
-``__init__.py`` 中构造
+``robot_spec.py`` 中构造
 ``PromptBundle(system=system_prompt, user=user_prompt)``（见上面的“入口”）。
 每个工厂返回一个有序的 ``dict[str, PromptNode]``，其中包含带标题的分节；
 ``PromptBundle.render`` 负责组装和填充。一套 prompt 供 API loop、Claude Code
@@ -189,7 +207,7 @@ API 版本。
    # robots/myrobot/prompt_bundle.py
    from robots.myrobot.prompts import system as system_parts
    from robots.myrobot.prompts import user as user_parts
-   from rpent.context.prompt_utils import PromptNode
+   from rpent.prompt.utils import PromptNode
 
    def system_prompt() -> PromptNode:
        return {
@@ -244,8 +262,11 @@ step index；该 ``StepRecord`` 会被立即追加并提交。大型观测通过
 
 **Toolkit 类** 继承 ``rpent.tools.toolkit.Toolkit``：
 
+- 在 ``super().__init__(...)`` 中传入 ``memory``（一个
+  :class:`~rpent.memory.MemoryManager`）和 ``state``。``memory_access`` 和
+  ``inbox_cell_tag`` 在构造 ``MemoryManager`` 时配置；eval 默认只读。
 - 在 ``__init__`` 中通过自定义的初始化辅助方法构建 primitives（LIBERO
-  中的方法名为 ``init_primitives_clean``；它会调用 ``EnvState.reset()``、构造
+  中的方法名为 ``init_primitives``；它会调用 ``EnvState.reset()``、构造
   原语并 dump 第 0 步）,
 - 用 ``self.add_tool(name, spec, handler)`` 注册每个工具。无状态的读取工具
   （如 ``view_env_state``、``finish``）直接绑定模块级函数；原语工具通过
@@ -254,7 +275,7 @@ step index；该 ``StepRecord`` 会被立即追加并提交。大型观测通过
 - 重写 ``close()``，通过 ``EnvState`` 保存 agent 侧剩余工件（例如
   ``state.save("episode.mp4", frames, step=None)``）。
 
-``primitives_kwargs`` 由 ``__init__.py:get_toolkit`` 转发给 toolkit，再原样传入
+``primitives_kwargs`` 由 ``robot_spec.py:get_toolkit`` 转发给 toolkit，再原样传入
 primitives 的 ``__init__``。其中通常包含
 ``{"env": MyEnvClient(...), "model": VLAClient(...), ...}``。
 
@@ -324,7 +345,7 @@ main.py 已创建的共享 parser。``use_dashboard`` 决定原本必填的参�
 5. Runtime 初始化钩子
 ---------------------
 
-三个 runtime 钩子都返回 ``(owned_daemons, primitives_kwargs)``：
+``init_runtime`` 返回 ``(owned_daemons, primitives_kwargs)``：
 
 - ``owned_daemons: list[ProcessDaemon]`` 只包含当前进程实际启动的子进程，
   当前 runner 会在清理阶段停止它们。连接外部 endpoint 时，不能把外部服务加入
@@ -333,20 +354,23 @@ main.py 已创建的共享 parser。``use_dashboard`` 决定原本必填的参�
   的 ``__init__``。完整参数通常包含
   ``{"env": MyEnvClient(...), "model": VLAClient(...)}``，以及其他辅助 client。
 
-``init_runtime`` 是普通 CLI 钩子。``parse_config`` 返回后，``main.py`` 调用它
-一次，初始化完整 runtime。当前 LIBERO 实现会启动或连接 ``env_server``、
-``vla_server`` 和 ``sam3_server``，并一次性返回全部 primitive 参数。
+第四个参数 ``components`` 指定要初始化的服务名称。``None`` 表示全部服务，普通
+CLI 会传入这个值。Dashboard 根据 ``dashboard.runtime_components`` 得到两个子集，
+每个 component 都必须显式声明 ``scope: "shared"`` 或 ``scope: "unique"``。Dashboard
+先初始化一次 shared components，再为每个新的环境实例初始化 unique
+components。两次都调用同一个钩子，最后合并返回的 ``primitives_kwargs``。在
+LIBERO 中，这两个子集分别是 ``{"vla", "sam3"}`` 和 ``{"env"}``。
 
-``init_shared_runtime`` 和 ``init_task_runtime`` 是 **仅供 Dashboard 使用** 的
-钩子，普通 CLI 不会调用。Dashboard 会在每个 Session 中调用一次
-``init_shared_runtime``，初始化 Session 持有的复用服务；随后为每个全新的
-TaskRun 调用 ``init_task_runtime``，并合并两者返回的 ``primitives_kwargs``。
-具体如何拆分取决于机器人自身的生命周期。LIBERO 将 VLA 和 SAM3 放在 Session
-范围，将环境放在 TaskRun 范围；其他机器人应采用适合自身服务的拆分，不必机械照搬。
+实现应在启动任何服务前拒绝未知 component 名称。如果多个选中的本地服务初始化
+较慢，应先全部启动，再依次等待 ready，让初始化过程可以重叠。参考实现见
+``robots/libero/robot_spec.py`` 中的有序 component registry。
 
 endpoint（``--env-endpoint``、``--vla-endpoint``，以及 LIBERO 的
-``--sam3-endpoint``）解析、子进程启动和 runtime 状态事件，应放在拥有对应服务的
-钩子中，runner 不处理这些机器人细节。参考实现见 ``robots/libero/__init__.py``。
+``--sam3-endpoint``）解析和环境专用服务命令，应放在拥有对应服务的钩子中。
+这些 spawner 应通过 ``rpent.robots.runtime.try_spawn_server`` 和
+``try_wait_server`` 组合，使各环境的状态事件、就绪失败和 owned daemon 清理保持
+一致；runner 不处理这些环境细节。参考模式见 ``robots/libero/robot_spec.py`` 和
+``robots/robocasa/robot_spec.py``。
 
 冒烟测试
 --------

@@ -1,9 +1,24 @@
+# Copyright 2026 The RPent Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Base class for agent tools.
 
 ``Toolkit`` is the agent-facing tool container. Subclasses can register tools
 during ``__init__`` via :meth:`Toolkit.add_tool`; the planner calls the tools through :meth:`Toolkit.get_tools_spec` and
 :meth:`Toolkit.execute_tool`.
 """
+
 from __future__ import annotations
 
 import base64
@@ -20,7 +35,8 @@ from rpent.dashboard.events import DashboardEventSink, StepRecordEvent
 from rpent.utils.templates import substitute
 
 if TYPE_CHECKING:
-    from rpent.tools.state import EnvState, StepRecord
+    from rpent.memory.manager import MemoryManager
+    from rpent.session import EnvState, StepRecord
 
 
 @dataclass(slots=True)
@@ -88,7 +104,9 @@ class ToolResult:
         """
         result = self.result
         if not isinstance(result, dict):
-            return [{"type": "text", "text": str(result)[:self.MAX_TEXT_BYTES_IN_RESULT]}]
+            return [
+                {"type": "text", "text": str(result)[: self.MAX_TEXT_BYTES_IN_RESULT]}
+            ]
 
         result_for_text = dict(result)
         image = result_for_text.pop("_image_bytes", None)
@@ -97,20 +115,22 @@ class ToolResult:
         image_wrist = result_for_text.pop("_image_wrist_bytes", None)
         text = json.dumps(result_for_text, indent=2, default=str)
         if len(text) > self.MAX_TEXT_BYTES_IN_RESULT:
-            text = text[:self.MAX_TEXT_BYTES_IN_RESULT] + "\n[truncated]"
+            text = text[: self.MAX_TEXT_BYTES_IN_RESULT] + "\n[truncated]"
 
         blocks: list[dict[str, Any]] = [{"type": "text", "text": text}]
 
         def _add_image_bytes(data_bytes: bytes) -> None:
             data = base64.b64encode(data_bytes).decode("utf-8")
-            blocks.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/png",
-                    "data": data,
-                },
-            })
+            blocks.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": data,
+                    },
+                }
+            )
 
         if image:
             _add_image_bytes(image)
@@ -139,6 +159,7 @@ class Toolkit:
         *,
         dashboard_events: DashboardEventSink,
         state: Any = None,
+        memory: "MemoryManager",
     ) -> None:
         self._tools: dict[
             str,
@@ -146,6 +167,7 @@ class Toolkit:
         ] = {}
         self._dashboard_events = dashboard_events
         self._state = state
+        self._memory = memory
         self._operation_lock = threading.Lock()
         self._active_operation: _ToolOperation | None = None
         self._register_common_tools()
@@ -176,13 +198,23 @@ class Toolkit:
         """Register the file/IO tools shared by every run."""
         from rpent.tools import common
 
+        memory_bindings = self._memory.get_common_tool_bindings()
         for spec in common.TOOLS_SPEC:
             name = spec["name"]
-            self.add_tool(name, spec, common.TOOL_HANDLERS[name])
+            binding = memory_bindings.get(name)
+            if binding is None:
+                binding = (spec, common.TOOL_HANDLERS[name])
+            tool_spec, handler = binding
+            self.add_tool(name, tool_spec, handler)
 
     # ------------------------------------------------------------------
     # Planner-facing API
     # ------------------------------------------------------------------
+
+    @property
+    def memory(self) -> "MemoryManager":
+        """Return the toolkit's memory manager."""
+        return self._memory
 
     @property
     def state(self) -> EnvState:
@@ -193,9 +225,7 @@ class Toolkit:
 
     def get_tools_spec(self) -> list[dict[str, Any]]:
         """Return the tool schemas the LLM sees."""
-        return substitute(
-            [spec for spec, _ in self._tools.values()]
-        )
+        return substitute([spec for spec, _ in self._tools.values()])
 
     def execute_tool(self, name: str, input_dict: dict[str, Any]) -> ToolResult:
         """Dispatch a tool call to its registered handler."""

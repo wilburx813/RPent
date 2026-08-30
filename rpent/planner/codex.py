@@ -1,3 +1,17 @@
+# Copyright 2026 The RPent Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Codex SDK planner.
 
 A thin, SDK-first backend. ``solve()`` prepares artifacts, drives one Codex
@@ -24,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 import openai_codex
+from openai_codex.generated.v2_all import ReasoningEffort
 
 from rpent.cli.tui import next_user_line
 from rpent.dashboard.events import (
@@ -33,7 +48,7 @@ from rpent.dashboard.events import (
 )
 from rpent.dashboard.interaction import DashboardInteractionPort
 from rpent.dashboard.planner_control import DashboardPlannerControl
-from rpent.planner.base import PlannerResult, strip_mcp_prefix
+from rpent.planner.base import REASONING_EFFORTS, PlannerResult, strip_mcp_prefix
 from rpent.planner.utils.http_mcp_server import HttpMcpServer
 from rpent.tools.toolkit import Toolkit
 from rpent.utils.config import get_repo_root
@@ -62,6 +77,7 @@ class CodexPlanner:
         extra_dirs: list[str] | None = None,
         output_path: str | Path | None = None,
         model: str | None = None,
+        reasoning_effort: str = "none",
     ):
         """Initialize the Codex SDK backend."""
         self._output_dir = str(output_dir)
@@ -73,11 +89,17 @@ class CodexPlanner:
         self._base_url = os.environ.get("CODEX_BASE_URL", None)
         self._api_key = os.environ.get("CODEX_API_KEY", None)
         self._dashboard_events = dashboard_events
-        self._turn_options = {
+        if reasoning_effort not in REASONING_EFFORTS:
+            raise ValueError(f"unsupported reasoning effort: {reasoning_effort}")
+        self._thread_options = {
             "approval_mode": openai_codex.ApprovalMode.deny_all,
             "cwd": self._repo_root,
             "model": self._model,
             "sandbox": openai_codex.Sandbox.full_access,
+        }
+        self._turn_options = {
+            **self._thread_options,
+            "effort": getattr(ReasoningEffort, reasoning_effort),
         }
 
     def solve(
@@ -227,7 +249,7 @@ class CodexPlanner:
             chunks: list[str] = []
             with openai_codex.Codex(config=self._build_config(mcp_url)) as codex:
                 state["codex"] = codex
-                thread = codex.thread_start(**self._turn_options)
+                thread = codex.thread_start(**self._thread_options)
                 state["thread"] = thread
 
                 with (
@@ -355,7 +377,8 @@ class CodexPlanner:
                 )
                 session = _CodexDashboardSession(
                     config=self._build_config(mcp_url),
-                    options=self._turn_options,
+                    thread_options=self._thread_options,
+                    turn_options=self._turn_options,
                     recorder=recorder,
                     emit_event=emit_event,
                     control=control,
@@ -434,13 +457,15 @@ class _CodexDashboardSession:
         self,
         *,
         config: Any,
-        options: dict[str, Any],
+        thread_options: dict[str, Any],
+        turn_options: dict[str, Any],
         recorder: "_Recorder",
         emit_event,
         control: DashboardPlannerControl,
     ) -> None:
         self._config = config
-        self._options = options
+        self._thread_options = thread_options
+        self._turn_options = turn_options
         self._recorder = recorder
         self._emit_event = emit_event
         self._control = control
@@ -454,7 +479,7 @@ class _CodexDashboardSession:
 
     async def run(self, prompt: str) -> None:
         self._codex = openai_codex.AsyncCodex(self._config)
-        self._thread = await self._codex.thread_start(**self._options)
+        self._thread = await self._codex.thread_start(**self._thread_options)
         await self.submit(prompt)
         await self._control.start()
         await self._control.run(self)
@@ -465,7 +490,7 @@ class _CodexDashboardSession:
         if self._turn is not None:
             await self._turn.steer(text)
             return 0
-        self._turn = await self._thread.turn(text, **self._options)
+        self._turn = await self._thread.turn(text, **self._turn_options)
         self._turn_done = asyncio.Event()
         self._turn_task = asyncio.create_task(
             self._consume_turn(self._turn, self._turn_done)

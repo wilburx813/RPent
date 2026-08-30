@@ -1,3 +1,17 @@
+# Copyright 2026 The RPent Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Claude Agent SDK planner.
 
 A thin, SDK-first backend for RPent. ``solve()`` does four things:
@@ -30,6 +44,7 @@ from rpent.dashboard.events import (
 from rpent.dashboard.interaction import DashboardInteractionPort
 from rpent.dashboard.planner_control import DashboardPlannerControl
 from rpent.planner.base import (
+    REASONING_EFFORTS,
     PlannerResult,
     add_mcp_prefix,
     strip_mcp_prefix,
@@ -62,6 +77,7 @@ class ClaudeCodePlanner:
         max_budget_usd: float = 10.0,
         extra_dirs: list[str] | None = None,
         output_path: str | Path | None = None,
+        reasoning_effort: str = "none",
     ):
         """Initialize the Claude Agent SDK backend."""
         self._output_dir = str(output_dir)
@@ -73,6 +89,9 @@ class ClaudeCodePlanner:
         self._extra_dirs = extra_dirs or []
         self._output_path = Path(output_path) if output_path else None
         self._dashboard_events = dashboard_events
+        if reasoning_effort not in REASONING_EFFORTS:
+            raise ValueError(f"unsupported reasoning effort: {reasoning_effort}")
+        self._reasoning_effort = reasoning_effort
 
     def solve(
         self,
@@ -321,6 +340,8 @@ class ClaudeCodePlanner:
             add_mcp_prefix(str(spec["name"])) for spec in toolkit.get_tools_spec()
         )
 
+        thinking = {"type": "disabled"} if self._reasoning_effort == "none" else None
+        effort = None if self._reasoning_effort == "none" else self._reasoning_effort
         return sdk.ClaudeAgentOptions(
             cwd=self._repo_root,
             model=self._model,
@@ -338,6 +359,8 @@ class ClaudeCodePlanner:
             add_dirs=[self._output_dir, *self._extra_dirs],
             # Ignore user/project .claude configuration; RPent owns the loop.
             setting_sources=[],
+            thinking=thinking,
+            effort=effort,
             stderr=lambda line: logger.debug("[claude-sdk] %s", line.rstrip()),
         )
 

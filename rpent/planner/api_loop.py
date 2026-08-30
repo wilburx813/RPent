@@ -1,3 +1,17 @@
+# Copyright 2026 The RPent Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Provider-independent tool-use agent loop built on pydantic-ai.
 
 The loop wraps the agent's :class:`~rpent.tools.toolkit.Toolkit` as
@@ -43,8 +57,8 @@ from rpent.dashboard.events import (
 )
 from rpent.dashboard.interaction import DashboardInteractionPort, DashboardMessage
 from rpent.dashboard.planner_control import DashboardPlannerControl
-from rpent.planner.base import PlannerResult
-from rpent.tools.state import EnvState
+from rpent.planner.base import REASONING_EFFORTS, PlannerResult
+from rpent.session import EnvState
 from rpent.tools.toolkit import Toolkit
 from rpent.utils.logging import get_logger
 
@@ -70,6 +84,7 @@ class ApiAgentLoop:
         model: Model,
         max_tokens: int = 8192,
         no_images: bool = False,
+        reasoning_effort: str = "none",
         *,
         dashboard_events: DashboardEventSink,
         timeout_s: int | None = None,
@@ -80,6 +95,9 @@ class ApiAgentLoop:
         self._dashboard_events = dashboard_events
         self._no_images = no_images
         self._timeout_s = timeout_s
+        if reasoning_effort not in REASONING_EFFORTS:
+            raise ValueError(f"unsupported reasoning effort: {reasoning_effort}")
+        self._reasoning_effort = reasoning_effort
 
     def solve(
         self,
@@ -343,13 +361,16 @@ class ApiAgentLoop:
 
     def _build_agent(self, system_prompt: str, toolkit: Toolkit) -> Agent:
         """Build an Agent for terminal or Dashboard execution."""
+        thinking_effort: str | bool = self._reasoning_effort
+        if thinking_effort == "none":
+            thinking_effort = False
         return Agent(
             self._model,
             instructions=system_prompt or None,
             tools=_build_tools(toolkit, no_images=self._no_images),
             model_settings=_build_model_settings(self._model, self._max_tokens),
             capabilities=[
-                Thinking(effort="high"),
+                Thinking(effort=thinking_effort),
                 ProcessHistory(processor=_prune_history_images),
             ],
         )
@@ -728,9 +749,7 @@ def _make_image_reader(
         read_image_tool.__doc__ = read_image_text_only.__doc__
         return read_image_tool
 
-    def read_image_tool(
-        name: str, step: int = -1
-    ) -> ToolReturn | dict[str, str]:
+    def read_image_tool(name: str, step: int = -1) -> ToolReturn | dict[str, str]:
         return read_image(name, step, state=state)
 
     read_image_tool.__name__ = "read_image"

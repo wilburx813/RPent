@@ -1,3 +1,17 @@
+# Copyright 2026 The RPent Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Thread-safe in-memory state for dashboard live runs."""
 
 from __future__ import annotations
@@ -30,7 +44,7 @@ from rpent.dashboard.interaction import (
 )
 
 if TYPE_CHECKING:
-    from rpent.tools.state import EnvState, StepRecord
+    from rpent.session import EnvState, StepRecord
 
 RUNTIME_STATUSES = {"pending", "starting", "ready", "failed"}
 TERMINAL_RUN_STATES = {"succeeded", "failed", "cancelled"}
@@ -307,16 +321,12 @@ class DashboardState:
             raise ValueError(f"invalid terminal run state: {state!r}")
         with self._condition:
             self._task_state = state
-            self._terminated = any(
-                item.get("terminated") for item in self._timeline
-            )
-            self._truncated = any(
-                item.get("truncated") for item in self._timeline
-            )
+            self._terminated = any(item.get("terminated") for item in self._timeline)
+            self._truncated = any(item.get("truncated") for item in self._timeline)
             self._error = None if error is None else str(error)
             self._task_replacement_requested = False
             self._seal_interaction_locked()
-            self._reset_task_runtime_locked()
+            self._reset_unique_components_locked()
             self._session_state = (
                 "task_starting" if self._pending_task is not None else "ready"
             )
@@ -342,7 +352,7 @@ class DashboardState:
         self._error = None
         self._usage = {"in": 0, "out": 0, "tool_calls": 0}
         self._planner_usage_base = {"in": 0, "out": 0, "tool_calls": 0}
-        self._reset_task_runtime_locked()
+        self._reset_unique_components_locked()
         self._events = []
         self._timeline = []
         self._frames = {}
@@ -418,7 +428,9 @@ class DashboardState:
             if self._task_state not in {"starting", "running"}:
                 raise InteractionUnavailableError("Dashboard TaskRun is not active")
             if self._task_replacement_requested:
-                raise InteractionUnavailableError("Dashboard TaskRun replacement is pending")
+                raise InteractionUnavailableError(
+                    "Dashboard TaskRun replacement is pending"
+                )
             self._planner_activity = "starting"
             self._accepting_input = False
             self._interrupt_requested = False
@@ -590,8 +602,7 @@ class DashboardState:
                     "in": self._planner_usage_base["in"] + int(event.inp),
                     "out": self._planner_usage_base["out"] + int(event.out),
                     "tool_calls": (
-                        self._planner_usage_base["tool_calls"]
-                        + int(event.tool_calls)
+                        self._planner_usage_base["tool_calls"] + int(event.tool_calls)
                     ),
                 }
             return
@@ -630,9 +641,9 @@ class DashboardState:
         """Return a detached copy of runtime status for a locked caller."""
         return {component: dict(status) for component, status in self._runtime.items()}
 
-    def _reset_task_runtime_locked(self) -> None:
+    def _reset_unique_components_locked(self) -> None:
         for component in self._runtime_components:
-            if component.get("scope", "shared") != "task":
+            if component["scope"] != "unique":
                 continue
             self._runtime[component["name"]] = {
                 "status": "pending",
