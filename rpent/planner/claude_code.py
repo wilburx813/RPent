@@ -53,7 +53,7 @@ from rpent.planner.base import (
     strip_mcp_prefix,
 )
 from rpent.planner.utils.http_mcp_server import mcp_result
-from rpent.tools import Toolkit, ToolResult
+from rpent.tools import ToolProvider, ToolResult
 from rpent.utils.config import get_repo_root
 from rpent.utils.logging import get_logger, init_output_dir
 from rpent.utils.templates import substitute
@@ -103,7 +103,7 @@ class ClaudeCodePlanner(Planner):
         *,
         system_prompt: str,
         user_message: str,
-        toolkit: Toolkit,
+        toolkit: ToolProvider,
         max_turns: int,
         input_queue: queue.Queue[str | None] | None = None,
         dashboard_interaction: DashboardInteractionPort | None = None,
@@ -132,7 +132,7 @@ class ClaudeCodePlanner(Planner):
         prompt: str,
         *,
         initial_user_text: str,
-        toolkit: Toolkit,
+        toolkit: ToolProvider,
         max_turns: int,
         input_queue: queue.Queue[str | None] | None = None,
         dashboard_interaction: DashboardInteractionPort | None = None,
@@ -291,7 +291,7 @@ class ClaudeCodePlanner(Planner):
         recorder: "_Recorder",
         input_queue,
         *,
-        toolkit: Toolkit,
+        toolkit: ToolProvider,
         emit,
         emit_user,
     ) -> None:
@@ -321,7 +321,7 @@ class ClaudeCodePlanner(Planner):
         options: Any,
         recorder: "_Recorder",
         *,
-        toolkit: Toolkit,
+        toolkit: ToolProvider,
         dashboard_interaction: DashboardInteractionPort,
         initial_user_text: str,
         emit,
@@ -348,7 +348,7 @@ class ClaudeCodePlanner(Planner):
 
     # -- options + tool bridge ---------------------------------------------
 
-    def _build_options(self, sdk: Any, *, toolkit: Toolkit, max_turns: int) -> Any:
+    def _build_options(self, sdk: Any, *, toolkit: ToolProvider, max_turns: int) -> Any:
         allowed = [
             part for part in self._allowed_tools.replace(",", " ").split() if part
         ]
@@ -501,7 +501,7 @@ class _ClaudeSessionDriver:
 class _TerminalSessionAdapter:
     """Preserve the terminal TUI's interrupt-then-query steering policy."""
 
-    def __init__(self, *, toolkit: Toolkit, input_queue: Any, emit_user) -> None:
+    def __init__(self, *, toolkit: ToolProvider, input_queue: Any, emit_user) -> None:
         self._toolkit = toolkit
         self._input_queue = input_queue
         self._emit_user = emit_user
@@ -819,7 +819,7 @@ class _Recorder:
 # ---------------------------------------------------------------------------
 
 
-def _build_rpent_server(sdk: Any, *, toolkit: Toolkit) -> Any:
+def _build_rpent_server(sdk: Any, *, toolkit: ToolProvider) -> Any:
     sdk_tools = []
     for declaration in toolkit.list_tools():
         name = declaration.name

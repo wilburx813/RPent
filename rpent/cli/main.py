@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import queue
 import shlex
 import sys
@@ -58,9 +59,14 @@ from rpent.planner.base import (
     REASONING_EFFORTS,
     build_planner,
     is_recoverable_agent_error,
+    resolve_model,
 )
 from rpent.planner.check import BASE_URL_ENV_BY_PLANNER
 from rpent.robots import enumerate_robots, get_robot_spec, get_toolkit
+from rpent.tools.code_policy import (
+    code_policy_prompt,
+    policy_tools,
+)
 from rpent.utils.logging import get_logger, init_output_dir
 
 logger = get_logger("agent")
@@ -104,6 +110,58 @@ def _serialize_messages(messages: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+def _validate_policy_args(args: argparse.Namespace) -> None:
+    """Validate policy execution settings before starting robot services."""
+    args.policy_mode = getattr(args, "policy_mode", "tools")
+    args.code_timeout_s = getattr(args, "code_timeout_s", 120.0)
+    args.code_max_calls = getattr(args, "code_max_calls", 100)
+    if args.policy_mode not in {"tools", "code"}:
+        raise ValueError("--policy-mode must be tools or code")
+    if not math.isfinite(args.code_timeout_s) or args.code_timeout_s <= 0:
+        raise ValueError("--code-timeout-s must be finite and greater than 0")
+    if isinstance(args.code_max_calls, bool) or not isinstance(
+        args.code_max_calls, int
+    ):
+        raise ValueError("--code-max-calls must be an integer greater than 0")
+    if args.code_max_calls <= 0:
+        raise ValueError("--code-max-calls must be greater than 0")
+    if args.policy_mode == "code" and args.planner == "flash":
+        raise ValueError("--policy-mode code cannot be used with --planner flash")
+
+
+def _configure_code_memory(args: argparse.Namespace, output_dir: Path) -> None:
+    """Give internal toolkit bookkeeping an isolated, unexposed directory."""
+    root = Path(output_dir) / "_code_policy_memory"
+    root.mkdir(parents=True, exist_ok=True)
+    args.memory_profile = "local"
+    args.memory_dir = str(root)
+    args.memory_repo = None
+
+
+def _code_task_details(run_config) -> dict:
+    """Keep task facts while leaving the legacy prompt and memory instructions out."""
+    details = dict(run_config.task_desc)
+    for name in ("instruction", "setup", "success_criteria", "constraints"):
+        value = run_config.prompt_vars.get(name)
+        if value and value != "<native task_language from state_00>":
+            details[name] = value
+    return details
+
+
+def _prepare_policy_config(args, robot_spec):
+    """Parse robot configuration and isolate code-mode internal memory storage."""
+    config = robot_spec.parse_config(args)
+    if args.policy_mode == "code":
+        _configure_code_memory(args, config.output_dir)
+        config.prompt_vars.update(
+            policy_mode="code",
+            memory_profile="local",
+            memory_dir=args.memory_dir,
+            memory_inbox=str(Path(args.memory_dir) / "_internal" / "inbox"),
+        )
+    return config
+
+
 def _build_argparser() -> argparse.ArgumentParser:
     known_robots = enumerate_robots()
     known_robots_text = ", ".join(known_robots) if known_robots else "none"
@@ -138,6 +196,24 @@ def _build_argparser() -> argparse.ArgumentParser:
         help="Planner backend: api | claude_code | codex are LLMs in the "
         "loop; flash is evaluation-only and replays a plan from memory, re-localizing "
         "each waypoint's anchor.",
+    )
+    ap.add_argument(
+        "--policy-mode",
+        choices=["tools", "code"],
+        default="tools",
+        help="Policy execution: direct tool calls or persistent Python cells.",
+    )
+    ap.add_argument(
+        "--code-timeout-s",
+        type=float,
+        default=120.0,
+        help="Wall-clock limit for each Python cell in code policy mode.",
+    )
+    ap.add_argument(
+        "--code-max-calls",
+        type=int,
+        default=100,
+        help="Maximum robot tool calls per Python cell in code policy mode.",
     )
     ap.add_argument(
         "--model",
@@ -317,7 +393,17 @@ def _start_continuation_session(
         dashboard_events=dashboard_events,
         no_images=args.no_images,
         interactive=args.interactive,
+        workspace=(
+            Path(output_dir)
+            / "sessions"
+            / f"session_{session_number:03d}"
+            / "code_policy"
+            if args.policy_mode == "code"
+            else None
+        ),
     )
+    if args.policy_mode == "code":
+        return planner, "", prompt_vars.get("initial_user_message", "")
     system_prompt = prompt_bundle.render(
         "system",
         variables={
@@ -367,6 +453,10 @@ def main() -> int:
     )
     args = parser.parse_args()
     args.robot_name = early.robot_name
+    try:
+        _validate_policy_args(args)
+    except ValueError as exc:
+        parser.error(str(exc))
     human_interactive_exploration = (
         args.explore and robot_spec.supports_human_interactive_exploration
     )
@@ -420,7 +510,19 @@ def main() -> int:
             parser.error(
                 "Human-interactive exploration requires a TTY for operator reset/verdict feedback"
             )
-    if args.explore and args.memory_profile == "hf":
+    if args.policy_mode == "code":
+        if args.memory_dir or args.memory_repo or args.memory_profile:
+            logger.info(
+                "Code policy uses task-local bookkeeping; memory options are unused."
+            )
+        args.memory_profile = "local"
+        args.memory_dir = None
+        args.memory_repo = None
+        args.auto_merge_memory = False
+        args.model = resolve_model(args.planner, args.model)
+        if hasattr(args, "memory_version"):
+            args.memory_version = "auto"
+    elif args.explore and args.memory_profile == "hf":
         parser.error("--explore cannot be used with --memory-profile hf")
     if args.explore and getattr(args, "explore_sessions", 1) <= 0:
         parser.error("--explore-sessions must be greater than 0")
@@ -446,7 +548,7 @@ def main() -> int:
         return run_dashboard_session(args, robot_spec, parser=parser)
 
     try:
-        run_config = robot_spec.parse_config(args)
+        run_config = _prepare_policy_config(args, robot_spec)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
     recipe_tag = run_config.recipe_tag
@@ -460,7 +562,8 @@ def main() -> int:
     output_dir = init_output_dir(output_dir, verbose=args.verbose)
     logger.info("physical agent cmd: %s", shlex.join([sys.executable, *sys.argv]))
 
-    prepare_run_memory(args, robot_spec, run_config)
+    if args.policy_mode == "tools":
+        prepare_run_memory(args, robot_spec, run_config)
 
     dashboard_events = NullDashboardEventSink()
 
@@ -469,7 +572,9 @@ def main() -> int:
         output_dir=output_dir,
         recipe_tag=recipe_tag,
         robot_name=robot_name,
-        memory_dir=prompt_vars.get("memory_dir"),
+        memory_dir=prompt_vars.get("memory_dir")
+        if args.policy_mode == "tools"
+        else None,
         base_url=args.base_url,
         model=args.model,
         max_tokens=args.max_tokens,
@@ -479,17 +584,25 @@ def main() -> int:
         dashboard_events=dashboard_events,
         no_images=args.no_images,
         interactive=args.interactive,
+        workspace=(
+            (
+                Path(output_dir) / "sessions" / "session_001"
+                if args.explore
+                else Path(output_dir)
+            )
+            / "code_policy"
+            if args.policy_mode == "code"
+            else None
+        ),
     )
     prompt_bundle = robot_spec.prompts
     prompt_vars = {**prompt_vars, "output_dir": output_dir}
-    system_prompt = prompt_bundle.render(
-        "system",
-        variables=prompt_vars,
-    )
-    user_msg = prompt_bundle.render(
-        "user",
-        variables=prompt_vars,
-    )
+    if args.policy_mode == "code":
+        system_prompt = ""
+        user_msg = json.dumps(_code_task_details(run_config), ensure_ascii=False)
+    else:
+        system_prompt = prompt_bundle.render("system", variables=prompt_vars)
+        user_msg = prompt_bundle.render("user", variables=prompt_vars)
 
     operator_input = None
     if human_interactive_exploration:
@@ -546,7 +659,7 @@ def main() -> int:
         first_user_msg = await_first_prompt()
         if first_user_msg is None:
             logger.info("no task entered; ending session before start.")
-    if human_interactive_exploration:
+    if human_interactive_exploration or args.policy_mode == "code":
         prompt_vars = {**prompt_vars, "initial_user_message": first_user_msg}
     # Exploration may hand off between independent planner contexts.
     sessions = max(1, int(getattr(args, "explore_sessions", 1) or 1))
@@ -619,13 +732,26 @@ def main() -> int:
 
                 operator_input.bind_verdict(accept_verdict)
             try:
-                result = planner.solve(
-                    system_prompt=system_prompt,
-                    user_message=session_msg,
-                    toolkit=toolkit,
-                    max_turns=args.max_turns,
-                    input_queue=input_queue,
-                )
+                with policy_tools(
+                    toolkit,
+                    mode=args.policy_mode,
+                    output_dir=Path(state_output_dir),
+                    timeout_s=args.code_timeout_s,
+                    max_calls=args.code_max_calls,
+                    include_images=not args.no_images,
+                ) as planner_tools:
+                    planner_prompt = (
+                        code_policy_prompt(robot_name, planner_tools)
+                        if args.policy_mode == "code"
+                        else system_prompt
+                    )
+                    result = planner.solve(
+                        system_prompt=planner_prompt,
+                        user_message=session_msg,
+                        toolkit=planner_tools,
+                        max_turns=args.max_turns,
+                        input_queue=input_queue,
+                    )
                 finish_result = result.finish_result
                 messages += result.messages
                 stats = result.stats
@@ -642,8 +768,14 @@ def main() -> int:
                     solved_fn
                 ):
                     solved = bool(solved_fn())
+                    if args.policy_mode == "code":
+                        environment_success = solved
                     write_recipe = getattr(toolkit, "write_recipe", None)
-                    if solved and callable(write_recipe):
+                    if (
+                        args.policy_mode == "tools"
+                        and solved
+                        and callable(write_recipe)
+                    ):
                         recipe_path = write_recipe(recipe_tag) or recipe_path
             finally:
                 if operator_input is not None and input_queue is not None:
@@ -685,7 +817,7 @@ def main() -> int:
             operator_input.close()
         if recipe_path:
             logger.info("recipe: %s", recipe_path)
-        else:
+        elif args.policy_mode == "tools":
             logger.info("recipe: not written (cell unsolved)")
         for d in daemons:
             d.stop()
@@ -696,6 +828,9 @@ def main() -> int:
     record = {
         **task_desc,
         "model": args.model,
+        "policy_mode": args.policy_mode,
+        "code_timeout_s": args.code_timeout_s,
+        "code_max_calls": args.code_max_calls,
         "elapsed_s": round(elapsed, 1),
         "finish": finish_result,
         "error": agent_error,
@@ -744,7 +879,8 @@ def main() -> int:
 
     # Publish exploration artifacts into the corpus after the session loop.
     if (
-        getattr(args, "explore", False)
+        args.policy_mode == "tools"
+        and getattr(args, "explore", False)
         and getattr(args, "auto_merge_memory", False)
         and not agent_error
         and not (finish_result or {}).get("operator_aborted")

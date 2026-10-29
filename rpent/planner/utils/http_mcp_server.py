@@ -45,7 +45,7 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from rpent.planner.base import execute_tool
 from rpent.tools import ToolResult
-from rpent.tools.toolkit import Toolkit
+from rpent.tools.base import ToolProvider
 from rpent.utils.logging import get_logger
 from rpent.utils.templates import substitute
 
@@ -80,7 +80,7 @@ def _strip_mcp_prefix(name: str) -> str:
     return name
 
 
-def build_mcp_server(toolkit: Toolkit) -> Server:
+def build_mcp_server(toolkit: ToolProvider) -> Server:
     """Expose native declarations through MCP, with Toolkit owning validation."""
     mcp_app: Server = Server(SERVER_NAME, version="0.1.0")
 
@@ -106,7 +106,7 @@ def build_mcp_server(toolkit: Toolkit) -> Server:
     return mcp_app
 
 
-def _build_asgi_app(toolkit: Toolkit) -> Any:
+def _build_asgi_app(toolkit: ToolProvider) -> Any:
     """Build a raw ASGI3 app wrapping an MCP ``Server`` + streamable HTTP."""
     session_manager = StreamableHTTPSessionManager(
         app=build_mcp_server(toolkit),
@@ -182,7 +182,7 @@ class HttpMcpServer:
 
     def __init__(
         self,
-        toolkit: Toolkit,
+        toolkit: ToolProvider,
         *,
         host: str = "127.0.0.1",
         port: int = 0,

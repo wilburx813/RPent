@@ -28,14 +28,19 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from rpent.cli.main import (
+    _code_task_details,
+    _configure_code_memory,
     _handoff_message,
+    _prepare_policy_config,
     _serialize_messages,
+    _validate_policy_args,
 )
 from rpent.dashboard.events import RunStartedEvent
 from rpent.evaluation import RunFinalizationContext
 from rpent.memory import MemoryManager
 from rpent.planner.base import build_planner, is_recoverable_agent_error
 from rpent.robots import get_toolkit
+from rpent.tools.code_policy import code_policy_prompt, policy_tools
 from rpent.utils.config import get_memory_dir
 from rpent.utils.logging import get_logger, init_output_dir
 
@@ -54,6 +59,10 @@ def run_dashboard_session(
     parser: argparse.ArgumentParser,
 ) -> int:
     """Run one long-lived Dashboard Session with sequential fresh TaskRuns."""
+    try:
+        _validate_policy_args(args)
+    except ValueError as exc:
+        parser.error(str(exc))
     if (
         robot_spec.is_real_robot
         and not (robot_spec.dashboard or {}).get("external_env", False)
@@ -113,6 +122,8 @@ def run_dashboard_session(
     else:
         session_root = Path(args.output_dir)
     session_root = init_output_dir(session_root, verbose=args.verbose)
+    if args.policy_mode == "code":
+        _configure_code_memory(args, session_root)
     logger.info("physical agent cmd: %s", shlex.join([sys.executable, *sys.argv]))
 
     state = DashboardState(
@@ -135,7 +146,8 @@ def run_dashboard_session(
     # Shared robot services may validate memory before a task is claimed.
     # Robots with a preparation hook select memory at each task boundary instead.
     if (
-        robot_spec.prepare_memory is None
+        args.policy_mode == "tools"
+        and robot_spec.prepare_memory is None
         and not getattr(args, "explore", False)
         and getattr(args, "memory_profile", "hf") == "hf"
     ):
@@ -199,13 +211,15 @@ def _run_dashboard_task(
     task_args = copy.copy(args)
     for name, value in claimed.request.items():
         setattr(task_args, name, value)
+    _validate_policy_args(task_args)
     if task_args.explore and not robot_spec.supports_exploration:
         raise ValueError(f"--explore is not supported for robot {robot_spec.name!r}")
     task_args.output_dir = str(claimed.output_dir)
-    run_config = robot_spec.parse_config(task_args)
+    run_config = _prepare_policy_config(task_args, robot_spec)
     from rpent.memory.loading import prepare_run_memory
 
-    prepare_run_memory(task_args, robot_spec, run_config)
+    if task_args.policy_mode == "tools":
+        prepare_run_memory(task_args, robot_spec, run_config)
     output_dir = init_output_dir(run_config.output_dir, verbose=args.verbose)
 
     recipe_tag = run_config.recipe_tag
@@ -232,7 +246,11 @@ def _run_dashboard_task(
                 **shared_runtime_kwargs,
             }
             prompt_vars = {**run_config.prompt_vars, "output_dir": output_dir}
-            session_message = robot_spec.prompts.render("user", variables=prompt_vars)
+            session_message = (
+                json.dumps(_code_task_details(run_config), ensure_ascii=False)
+                if task_args.policy_mode == "code"
+                else robot_spec.prompts.render("user", variables=prompt_vars)
+            )
             sessions = max(
                 1,
                 int(getattr(task_args, "explore_sessions", 1) or 1),
@@ -253,19 +271,24 @@ def _run_dashboard_task(
                         session_number,
                         sessions,
                     )
-                    session_message = _handoff_message(
-                        output_dir,
-                        session_number,
-                        sessions,
-                        robot_name=args.robot_name,
+                    if task_args.policy_mode == "tools":
+                        session_message = _handoff_message(
+                            output_dir,
+                            session_number,
+                            sessions,
+                            robot_name=args.robot_name,
+                        )
+                system_prompt = (
+                    ""
+                    if task_args.policy_mode == "code"
+                    else robot_spec.prompts.render(
+                        "system",
+                        variables={
+                            **prompt_vars,
+                            "session_number": session_number,
+                            "session_max": sessions,
+                        },
                     )
-                system_prompt = robot_spec.prompts.render(
-                    "system",
-                    variables={
-                        **prompt_vars,
-                        "session_number": session_number,
-                        "session_max": sessions,
-                    },
                 )
                 state_output_dir = output_dir
                 if getattr(task_args, "explore", False):
@@ -315,21 +338,43 @@ def _run_dashboard_task(
                         robot_name=args.robot_name,
                         base_url=args.base_url,
                         model=task_args.model,
-                        memory_dir=run_config.prompt_vars.get("memory_dir"),
+                        memory_dir=(
+                            run_config.prompt_vars.get("memory_dir")
+                            if task_args.policy_mode == "tools"
+                            else None
+                        ),
                         max_tokens=args.max_tokens,
                         planner_timeout_s=args.planner_timeout_s,
                         reasoning_effort=args.reasoning_effort,
                         claude_code_max_budget_usd=args.claude_code_max_budget_usd,
                         dashboard_events=state,
                         no_images=args.no_images,
+                        workspace=(
+                            Path(state_output_dir) / "code_policy"
+                            if task_args.policy_mode == "code"
+                            else None
+                        ),
                     )
-                    result = planner.solve(
-                        system_prompt=system_prompt,
-                        user_message=session_message,
-                        toolkit=toolkit,
-                        max_turns=args.max_turns,
-                        dashboard_interaction=state,
-                    )
+                    with policy_tools(
+                        toolkit,
+                        mode=task_args.policy_mode,
+                        output_dir=Path(state_output_dir),
+                        timeout_s=task_args.code_timeout_s,
+                        max_calls=task_args.code_max_calls,
+                        include_images=not args.no_images,
+                    ) as planner_tools:
+                        planner_prompt = (
+                            code_policy_prompt(args.robot_name, planner_tools)
+                            if task_args.policy_mode == "code"
+                            else system_prompt
+                        )
+                        result = planner.solve(
+                            system_prompt=planner_prompt,
+                            user_message=session_message,
+                            toolkit=planner_tools,
+                            max_turns=args.max_turns,
+                            dashboard_interaction=state,
+                        )
                     finish_result = result.finish_result
                     messages += result.messages
                     stats = result.stats
@@ -340,7 +385,9 @@ def _run_dashboard_task(
                             stats["planner_error_at_operator_verdict"] = agent_error
                     if robot_spec.supports_exploration:
                         solved = bool(toolkit.solved())
-                        if solved:
+                        if task_args.policy_mode == "code":
+                            environment_success = solved
+                        if task_args.policy_mode == "tools" and solved:
                             recipe_path = (
                                 toolkit.write_recipe(recipe_tag) or recipe_path
                             )
@@ -383,7 +430,7 @@ def _run_dashboard_task(
         cleanup_errors: list[str] = []
         if recipe_path:
             logger.info("recipe: %s", recipe_path)
-        else:
+        elif task_args.policy_mode == "tools":
             logger.info("recipe: not written (cell unsolved)")
         for daemon in reversed(task_daemons):
             try:
@@ -401,6 +448,9 @@ def _run_dashboard_task(
         record = {
             **run_config.task_desc,
             "model": task_args.model,
+            "policy_mode": task_args.policy_mode,
+            "code_timeout_s": task_args.code_timeout_s,
+            "code_max_calls": task_args.code_max_calls,
             "elapsed_s": round(time.time() - started, 1),
             "finish": finish_result,
             "environment_success": environment_success,
@@ -417,7 +467,8 @@ def _run_dashboard_task(
         init_output_dir(session_root, verbose=args.verbose)
 
     if (
-        getattr(task_args, "explore", False)
+        task_args.policy_mode == "tools"
+        and getattr(task_args, "explore", False)
         and getattr(task_args, "auto_merge_memory", False)
         and not agent_error
         and not state.task_finalization_cancelled

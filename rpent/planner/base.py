@@ -27,8 +27,7 @@ from typing import TYPE_CHECKING
 
 from rpent.dashboard.events import DashboardEventSink
 from rpent.dashboard.interaction import DashboardInteractionPort
-from rpent.tools.base import ToolResult
-from rpent.tools.toolkit import Toolkit
+from rpent.tools.base import ToolProvider, ToolResult
 from rpent.utils.config import (
     get_memory_dir,
     get_repo_root,
@@ -80,7 +79,7 @@ async def cancel_and_wait(cancel: Callable[[], None]) -> None:
         await _wait_for_cleanup(worker)
 
 
-async def execute_tool(toolkit: Toolkit, name: str, arguments: dict) -> ToolResult:
+async def execute_tool(toolkit: ToolProvider, name: str, arguments: dict) -> ToolResult:
     """Retain tool workers, including queued executor jobs, through cancellation."""
     worker = asyncio.create_task(
         asyncio.to_thread(toolkit.execute_tool, name, arguments)
@@ -139,7 +138,7 @@ class Planner(ABC):
         *,
         system_prompt: str,
         user_message: str,
-        toolkit: Toolkit,
+        toolkit: ToolProvider,
         max_turns: int,
         input_queue: queue.Queue[str | None] | None = None,
         dashboard_interaction: DashboardInteractionPort | None = None,
@@ -149,8 +148,8 @@ class Planner(ABC):
         Args:
             system_prompt: System-level instructions (role, rules, workflow).
             user_message: Initial user message (task description, first steps).
-            toolkit: The full :class:`~rpent.tools.toolkit.Toolkit`
-                (common + robot tools). Backends derive ``tools_spec`` via
+            toolkit: The planner-facing tool provider. Backends derive
+                ``tools_spec`` via
                 ``toolkit.list_tools()`` and dispatch calls via
                 ``toolkit.execute_tool()``.
             max_turns: Maximum LLM turns before giving up.
@@ -233,10 +232,16 @@ def build_planner(
     dashboard_events: DashboardEventSink,
     no_images: bool = False,
     interactive: bool = False,
+    workspace: str | Path | None = None,
 ) -> Planner:
     """Build a planner for the given backend, resolving credentials from env vars."""
     # Imports are deferred to avoid a circular import: api_loop / claude_code /
     # codex all import from this module (PlannerResult).
+    if workspace is not None:
+        Path(workspace).mkdir(parents=True, exist_ok=True)
+    extra_dirs = (
+        [] if workspace is not None else [str(memory_dir or get_memory_dir(robot_name))]
+    )
 
     if planner_type == "api":
         from rpent.planner.api_loop import ApiAgentLoop
@@ -265,11 +270,11 @@ def build_planner(
             cc_budget = float(os.environ.get("MAX_BUDGET_USD", "10"))
         return ClaudeCodePlanner(
             output_dir=output_dir,
-            repo_root=get_repo_root(),
+            repo_root=workspace or get_repo_root(),
             model=model or "sonnet",
             timeout_s=cc_timeout_s,
             max_budget_usd=cc_budget,
-            extra_dirs=[str(memory_dir or get_memory_dir(robot_name))],
+            extra_dirs=extra_dirs,
             output_path=Path(output_dir) / f"claude_{recipe_tag}.txt",
             dashboard_events=dashboard_events,
             reasoning_effort=reasoning_effort,
@@ -287,10 +292,10 @@ def build_planner(
             )
         return CodexPlanner(
             output_dir=output_dir,
-            repo_root=get_repo_root(),
+            repo_root=workspace or get_repo_root(),
             model=model,
             timeout_s=cx_timeout_s,
-            extra_dirs=[str(memory_dir or get_memory_dir(robot_name))],
+            extra_dirs=extra_dirs,
             output_path=Path(output_dir) / f"codex_{recipe_tag}.txt",
             dashboard_events=dashboard_events,
             reasoning_effort=reasoning_effort,

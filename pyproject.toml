@@ -269,6 +269,11 @@ include = ["rpent*", "robots", "robots.*"]
 exclude = ["tests*", "docs*", "examples*", "docker*", "toolkits*"]
 
 [tool.setuptools.package-data]
+"robots.dual_franka.prompts" = ["code_policy*.md"]
+"robots.libero.prompts" = ["code_policy*.md"]
+"robots.robocasa.prompts" = ["code_policy*.md"]
+"robots.robodojo.prompts" = ["code_policy*.md"]
+"robots.robotwin.prompts" = ["code_policy*.md"]
 "rpent.dashboard" = ["*.html", "static/*.css", "static/*.js"]
 "robots.yam" = ["config/*.yaml", "config/*.json", "guides/*.md"]
 

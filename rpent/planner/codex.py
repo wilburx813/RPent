@@ -56,7 +56,7 @@ from rpent.planner.base import (
     strip_mcp_prefix,
 )
 from rpent.planner.utils.http_mcp_server import HttpMcpServer
-from rpent.tools.toolkit import Toolkit
+from rpent.tools.base import ToolProvider
 from rpent.utils.config import get_repo_root
 from rpent.utils.logging import get_logger
 
@@ -133,7 +133,7 @@ class CodexPlanner(Planner):
         *,
         system_prompt: str,
         user_message: str,
-        toolkit: Toolkit,
+        toolkit: ToolProvider,
         max_turns: int,
         input_queue: queue.Queue[str | None] | None = None,
         dashboard_interaction: DashboardInteractionPort | None = None,
@@ -283,7 +283,7 @@ class CodexPlanner(Planner):
         recorder: "_Recorder",
         state: dict[str, Any],
         mcp_url: str,
-        toolkit: Toolkit,
+        toolkit: ToolProvider,
         input_queue: "queue.Queue[str | None] | None" = None,
     ) -> None:
         try:
@@ -381,7 +381,7 @@ class CodexPlanner(Planner):
         *,
         prompt: str,
         initial_user_text: str,
-        toolkit: Toolkit,
+        toolkit: ToolProvider,
         max_turns: int,
         interaction: DashboardInteractionPort,
     ) -> PlannerResult:

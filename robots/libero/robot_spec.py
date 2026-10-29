@@ -314,7 +314,11 @@ def _parse_config(args: argparse.Namespace) -> RunConfig:
         if args.memory_dir
         else get_memory_dir("libero")
     )
-    local_eval = not explore and memory_profile == "local"
+    local_eval = (
+        not explore
+        and memory_profile == "local"
+        and getattr(args, "policy_mode", "tools") != "code"
+    )
     if local_eval:
         if planner == "flash":
             from robots.libero.memory import replay_directory

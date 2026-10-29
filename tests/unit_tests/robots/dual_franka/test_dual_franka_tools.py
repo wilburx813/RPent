@@ -935,3 +935,48 @@ def test_named_vla_uses_configured_instruction_and_semantic_boundary():
     assert result["boundary"] == "grasp"
     assert result["boundary_reached"]
     assert len(env.chunks) == 3
+
+
+def test_code_policy_preserves_dual_franka_operator_gates(
+    tmp_path, dual_franka_robot_config, monkeypatch
+):
+    from rpent.tools.code_policy import policy_tools
+    from rpent.utils import logging as logging_module
+
+    monkeypatch.setattr(logging_module, "_output_dir", tmp_path)
+    set_robot_config_path(dual_franka_robot_config)
+    env = FakeEnv()
+    toolkit = DualFrankaToolkit(
+        runtime_kwargs={"env": env, "model": None, "task_description": "test"},
+        dashboard_events=NullDashboardEventSink(),
+        memory=MemoryManager(tmp_path / "memory"),
+        mode="evaluation",
+        state_output_dir=tmp_path / "state",
+    )
+    try:
+        with policy_tools(toolkit, mode="code", output_dir=tmp_path) as provider:
+            code = "robo.move_delta(arm='right', delta_xyz=[0.0, 0.0, 0.01])"
+            blocked = provider.execute_tool("python", {"code": code})
+            assert blocked.data["last_tool_result"].get("error")
+            assert not env.moves
+            toolkit._read_operator_line = lambda prompt: "done"
+            reset = provider.execute_tool("request_scene_reset", {"reason": "test"})
+            assert not reset.is_error
+            observed = provider.execute_tool("python", {"code": "robo.observe()"})
+            assert observed.data["exception"] is None
+            assert observed.images
+            assert not env.moves
+            moved = provider.execute_tool("python", {"code": code})
+            assert moved.data["exception"] is None
+            assert not moved.data["last_tool_result"].get("error")
+            assert len(env.moves) == 1
+            assert provider.execute_tool(
+                "finish", {"status": "success", "summary": "test"}
+            ).is_error
+            toolkit._read_operator_line = lambda prompt: "success checked by operator"
+            assert not provider.execute_tool("request_operator_verdict", {}).is_error
+            assert provider.execute_tool(
+                "finish", {"status": "success", "summary": "confirmed"}
+            ).data["_finish"]
+    finally:
+        toolkit.close()

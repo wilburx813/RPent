@@ -75,7 +75,7 @@ from rpent.planner.base import (
     cancel_and_wait,
     execute_tool,
 )
-from rpent.tools.toolkit import Toolkit, ToolResult
+from rpent.tools.base import ToolProvider, ToolResult
 from rpent.utils.logging import get_logger
 from rpent.utils.templates import substitute
 
@@ -123,7 +123,7 @@ class ApiAgentLoop(Planner):
         *,
         system_prompt: str,
         user_message: str,
-        toolkit: Toolkit,
+        toolkit: ToolProvider,
         max_turns: int,
         input_queue=None,
         dashboard_interaction: DashboardInteractionPort | None = None,
@@ -149,7 +149,7 @@ class ApiAgentLoop(Planner):
         self,
         system_prompt: str,
         user_message: str,
-        toolkit: Toolkit,
+        toolkit: ToolProvider,
         max_turns: int,
         interaction: DashboardInteractionPort | None,
     ) -> PlannerResult:
@@ -294,7 +294,7 @@ class _HarnessToolkit(FunctionToolset):
 
     def __init__(
         self,
-        toolkit: Toolkit,
+        toolkit: ToolProvider,
         *,
         dashboard_events: DashboardEventSink,
         no_images: bool,

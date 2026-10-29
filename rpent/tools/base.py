@@ -24,12 +24,23 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from functools import wraps
 from types import SimpleNamespace
-from typing import Annotated, Any, Generic, ParamSpec, get_type_hints
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Generic,
+    ParamSpec,
+    Protocol,
+    get_type_hints,
+)
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic_ai import Tool as PydanticTool
 from pydantic_core import core_schema
+
+if TYPE_CHECKING:
+    from rpent.session import EnvState
 
 ParamsT = ParamSpec("ParamsT")
 MAX_TOOL_TEXT_BYTES = 60000
@@ -144,6 +155,31 @@ class Tool(Generic[ParamsT]):
 
     def __call__(self, *args: ParamsT.args, **kwargs: ParamsT.kwargs) -> ToolResult:
         return self.handler(*args, **kwargs)
+
+
+class ToolProvider(Protocol):
+    """Planner-facing tools, independent of robot resource ownership."""
+
+    @property
+    def state(self) -> EnvState:
+        """Return the shared observation and artifact store."""
+        ...
+
+    def list_tools(self) -> tuple[Tool, ...]:
+        """Return the declarations visible to the planner."""
+        ...
+
+    def execute_tool(self, name: str, input_dict: dict[str, Any]) -> ToolResult:
+        """Validate and execute a declared tool."""
+        ...
+
+    def cancel_active_and_wait(self) -> None:
+        """Pause admission and drain all active calls."""
+        ...
+
+    def resume_calls(self) -> None:
+        """Reopen admission after interrupted calls have drained."""
+        ...
 
 
 def tool(
