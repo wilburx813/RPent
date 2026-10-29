@@ -67,7 +67,11 @@ def test_variables_survive_python_exceptions(policy):
     failed = _run(provider, "x = 41\nraise ValueError('retry')")
     assert failed["exception"]["type"] == "ValueError"
     assert not failed["namespace_reset"]
-    assert _run(provider, "x + 1")["value"] == "42"
+    silent = _run(provider, "x + 1")
+    assert silent["exception"] is None
+    assert silent["stdout"] == ""
+    assert "value" not in silent
+    assert _run(provider, "print(x + 1)")["stdout"] == "42\n"
     assert robot.cancel_count == 0
 
 
@@ -79,8 +83,8 @@ def test_worker_failure_or_timeout_allows_a_fresh_cell(policy, code):
     assert result["interrupted"] and result["namespace_reset"]
     assert result["timed_out"] is code.startswith("while")
     assert robot.cancel_count == 1
-    assert _run(provider, "'x' in globals()")["value"] == "False"
-    assert _run(provider, "6 * 7")["value"] == "42"
+    assert _run(provider, "print('x' in globals())")["stdout"] == "False\n"
+    assert _run(provider, "print(6 * 7)")["stdout"] == "42\n"
 
 
 @pytest.mark.parametrize("external", [False, True])
@@ -109,7 +113,7 @@ def test_cancellation_drains_robot_and_external_stop_requires_resume(policy, ext
     if external:
         assert _run(provider, "42")["code"] == "tool_cancelled"
         provider.resume_calls()
-    assert _run(provider, "'x' in globals()")["value"] == "False"
+    assert _run(provider, "print('x' in globals())")["stdout"] == "False\n"
 
 
 def test_repeated_stop_notifies_once_until_resumed(tmp_path):
@@ -126,7 +130,8 @@ def test_repeated_stop_notifies_once_until_resumed(tmp_path):
         session.cancel()
         assert notifications == ["stop"]
         session.resume()
-        assert session.execute("'x' in globals()", timeout_s=3)["value"] == "False"
+        result = session.execute("print('x' in globals())", timeout_s=3)
+        assert result["stdout"] == "False\n"
         session.cancel()
         assert notifications == ["stop", "stop"]
     finally:
@@ -164,4 +169,4 @@ def test_timeout_discards_already_queued_cells(policy, monkeypatch):
             robot.release.set()
         assert running.result(timeout=3)["timed_out"]
         assert waiting.result(timeout=3)["code"] == "tool_cancelled"
-    assert _run(provider, "'stale' in globals()")["value"] == "False"
+    assert _run(provider, "print('stale' in globals())")["stdout"] == "False\n"

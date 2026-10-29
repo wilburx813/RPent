@@ -16,12 +16,10 @@
 
 from __future__ import annotations
 
-import ast
 import contextlib
 import io
 import json
 import os
-import reprlib
 import sys
 import traceback
 from typing import Any
@@ -129,27 +127,11 @@ class _Worker:
     def execute(self, message: dict[str, Any]) -> dict[str, Any]:
         stdout, stderr = _Output(), _Output()
         self.namespace["robo"] = _Robot(self.channel, message["tools"])
-        result: dict[str, Any] = {"value": None, "exception": None}
+        result: dict[str, Any] = {"exception": None}
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             try:
                 filename = message["filename"]
-                tree = ast.parse(message["code"], filename=filename, mode="exec")
-                last = (
-                    tree.body.pop()
-                    if tree.body and isinstance(tree.body[-1], ast.Expr)
-                    else None
-                )
-                exec(compile(tree, filename, "exec"), self.namespace)
-                if last is not None:
-                    value = eval(
-                        compile(ast.Expression(last.value), filename, "eval"),
-                        self.namespace,
-                    )
-                    if value is not None:
-                        representation = reprlib.Repr()
-                        representation.maxstring = 4000
-                        representation.maxother = 4000
-                        result["value"] = representation.repr(value)[:8000]
+                exec(compile(message["code"], filename, "exec"), self.namespace)
             except BaseException as exc:
                 result["exception"] = {
                     "type": type(exc).__name__,

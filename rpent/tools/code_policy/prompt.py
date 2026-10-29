@@ -35,9 +35,9 @@ API reference are available; there are no additional robot properties or aliases
 
 Calls return the original dictionaries, including error fields and observation
 envelopes. A state-changing result may contain both the observation and the action
-result (for example under `log.result`); inspect its actual fields. Print what you
-need or end the cell with an expression. Feedback contains stdout, stderr, any
-exception, the trailing expression and the last tool result. The latest returned
+result (for example under `log.result`); inspect its actual fields. Use `print(...)`
+to include values in the feedback; bare expressions produce no output. Feedback
+contains stdout, stderr, any exception and the last tool result. The latest returned
 tool images are attached when images are enabled. A later state-changing call
 replaces earlier images. A completed call is not proof of physical success.
 

@@ -124,7 +124,7 @@ class CodeSession:
             timeout_s: Positive wall-clock budget including host tool calls.
 
         Returns:
-            Captured output, final expression repr, exception details and elapsed time.
+            Captured output, exception details and elapsed time.
         """
         if not isinstance(code, str) or len(code.encode("utf-8")) > MAX_SOURCE_BYTES:
             raise ValueError("Python source must be a string no larger than 64 KiB")
@@ -154,7 +154,6 @@ class CodeSession:
         result: dict[str, Any] = {
             "stdout": "",
             "stderr": "",
-            "value": None,
             "exception": None,
         }
         try:

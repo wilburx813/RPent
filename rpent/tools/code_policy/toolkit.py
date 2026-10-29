@@ -124,7 +124,7 @@ class CodePolicyTools:
 
         Call registered tools as robo.<name>(**keyword_arguments). Results retain
         their original dictionaries and error fields. Variables persist between
-        calls; stdout and the trailing expression are returned with the latest
+        calls; use print(...) to return values in stdout alongside the latest
         tool images. End the cell for required visual checks. Use the separate
         finish tool to end the task. Timeout/cancellation discards variables,
         but does not undo executed actions.
