@@ -146,7 +146,6 @@ class _Worker:
                         self.namespace,
                     )
                     if value is not None:
-                        self.namespace["_"] = value
                         representation = reprlib.Repr()
                         representation.maxstring = 4000
                         representation.maxother = 4000
