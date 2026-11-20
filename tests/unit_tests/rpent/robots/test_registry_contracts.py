@@ -173,7 +173,9 @@ def test_libero_prompts_observe_task_before_reading_memory(
     prompts = get_robot_spec("libero").prompts
     system = prompts.render("system", variables=variables)
     user = prompts.render("user", variables=variables)
-    workflow = system.split("\nWORKFLOW\n", 1)[1]
+    workflow = system.split("\nINITIALIZATION AND MEMORY\n", 1)[1].split(
+        "\nPERCEPTION AND LOCALIZATION\n", 1
+    )[0]
     memory_step = (
         "READ EACH AVAILABLE LOCAL MEMORY LAYER"
         if mode == "eval" and memory_profile == "local"

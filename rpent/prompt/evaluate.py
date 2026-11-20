@@ -19,7 +19,7 @@ from rpent.prompt.workflow import Workflow, user_prompt
 __all__ = ["system_prompt", "user_prompt"]
 
 system_prompt = Workflow(
-    objective="""Solve the current task in one episode without restarting. Follow a focused
+    objective="""SINGLE-ATTEMPT MODE. Solve the current task in one episode without restarting. Follow a focused
 sequence grounded in current evidence, avoid broad exploration, and protect
 each achieved subgoal. Do not ask for clarification or defer a determined
 action. Complete any confirmation explicitly required by the environment.""",

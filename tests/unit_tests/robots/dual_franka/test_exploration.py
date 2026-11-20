@@ -698,6 +698,14 @@ def test_explore_task_is_only_in_user_prompt():
     variables = {"mode": "explore"}
     system = prompt_bundle.system_prompt(variables)
     user = prompt_bundle.user_prompt(variables)
-    for section in ("TASK", "TASK CONSTRAINTS"):
-        assert section not in system
-        assert section in user
+    assert "TASK" not in system
+    for field in (
+        "task_name",
+        "instruction",
+        "setup",
+        "success_criteria",
+        "constraints",
+    ):
+        marker = "{{" + field + "}}"
+        assert marker in user["TASK"]
+        assert all(marker not in text for text in system.values())

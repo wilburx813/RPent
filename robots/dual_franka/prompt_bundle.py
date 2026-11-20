@@ -18,39 +18,38 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from robots.dual_franka.prompts import explore as explore_parts
-from robots.dual_franka.prompts import system as system_parts
-from robots.dual_franka.prompts import user as user_parts
-from rpent.prompt.utils import Numbered, PromptNode
+from robots.dual_franka.prompts import explore as exploration
+from robots.dual_franka.prompts import system, user
+from rpent.prompt import evaluate, explore
+from rpent.prompt.workflow import user_prompt as build_user_prompt
 
 
-def system_prompt(variables: Mapping[str, object] | None = None) -> PromptNode:
-    """Assemble the dual-Franka system prompt."""
-    if (variables or {}).get("mode") == "explore":
-        return explore_parts.system_prompt()
-    node: dict[str, object] = {
-        "ROLE": system_parts.ROLE,
-        "RUNTIME": system_parts.RUNTIME,
-        "SAFETY RULES": Numbered(system_parts.RULES),
-        "CAMERA AND PROJECTION RULES": Numbered(system_parts.CAMERA_AND_PROJECTION),
-        "VLA SEGMENT GATES": Numbered(system_parts.VLA_GATES),
-        "WORKFLOW": Numbered(system_parts.WORKFLOW),
-    }
-    return node
-
-
-def user_prompt(variables: Mapping[str, object] | None = None) -> PromptNode:
-    """Assemble the task-specific initial user prompt."""
-    node: dict[str, object] = {
-        "TASK": user_parts.TASK,
-        "TASK CONSTRAINTS": user_parts.CONSTRAINTS,
-        "BEGIN": explore_parts.BEGIN
-        if (variables or {}).get("mode") == "explore"
-        else user_parts.BEGIN,
-    }
-    if (variables or {}).get("mode") == "explore":
-        node["EXPLORATION OUTPUT"] = (
-            "Use {{memory_inbox}} for reviewable exploration notes and "
-            "{{output_dir}}/attempts/ for failed-attempt archives."
+def system_prompt(variables: Mapping[str, object] | None = None) -> dict[str, str]:
+    """Compose the physical robot gates with the selected mode."""
+    exploring = (variables or {}).get("mode") == "explore"
+    if exploring:
+        return explore.system_prompt(
+            role="\n".join((system.ROLE, explore.SESSION, exploration.MODE)),
+            initialization=system.INITIALIZATION + "\n\n" + exploration.READ_ORDER,
+            perception=system.PERCEPTION,
+            action=system.ACTION,
+            action_model_guidance=system.VLA_GATES,
+            recovery="\n\n".join(
+                (system.RECOVERY, exploration.RECOVERY, exploration.ARCHIVE)
+            ),
+            success=exploration.VERDICT + "\n\n" + exploration.MEMORY,
         )
-    return node
+    return evaluate.system_prompt(
+        role=system.ROLE,
+        initialization=system.INITIALIZATION,
+        perception=system.PERCEPTION + "\n\n" + system.LOCALIZATION_TABLE,
+        action=system.ACTION,
+        action_model_guidance=system.VLA_GATES,
+        recovery=system.RECOVERY,
+        success=system.VERDICT,
+    )
+
+
+def user_prompt(variables: Mapping[str, object] | None = None) -> dict[str, str]:
+    """Place the current task, constraints and startup sequence in the user message."""
+    return build_user_prompt(user.TASK)

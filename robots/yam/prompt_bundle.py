@@ -14,33 +14,41 @@ from collections.abc import Mapping
 
 from robots.yam.prompts import system as system_parts
 from robots.yam.prompts import user as user_parts
-from rpent.prompt.utils import PromptNode
+from rpent.prompt import evaluate, explore
+from rpent.prompt.workflow import user_prompt as build_user_prompt
 
 
-def system_prompt(variables: Mapping[str, object] | None = None) -> PromptNode:
-    policy = (
-        system_parts.VLA
-        if (variables or {}).get("vla_enabled", False)
-        else system_parts.PRIMITIVES_ONLY
-    )
-    return {
-        "ROLE": system_parts.ROLE,
-        "READ ORDER": system_parts.READ_ORDER,
-        **(
-            {"REAL-ROBOT EXPLORE": system_parts.EXPLORE}
-            if (variables or {}).get("mode", "eval") == "explore"
-            else {}
+def system_prompt(variables: Mapping[str, object] | None = None) -> dict[str, str]:
+    """Assemble the YAM workflow for the run mode and configured policy."""
+    variables = variables or {}
+    exploring = variables.get("mode") == "explore"
+    workflow = explore if exploring else evaluate
+    initialization = system_parts.READ_ORDER
+    success = system_parts.SUCCESS
+    if exploring:
+        initialization += "\n\n" + explore.SESSION + " " + system_parts.EXPLORE_START
+        success += "\n\n" + system_parts.EXPLORE_REPORTING
+    else:
+        success += "\n\nEvaluation memory is read-only."
+    return workflow.system_prompt(
+        role=system_parts.ROLE,
+        runtime=system_parts.RUNTIME,
+        initialization=initialization,
+        perception=system_parts.PERCEPTION,
+        action=system_parts.CONTROL,
+        action_model_guidance=(
+            system_parts.VLA
+            if variables.get("vla_enabled")
+            else system_parts.PRIMITIVES_ONLY
         ),
-        "RUNTIME": system_parts.RUNTIME,
-        "PERCEPTION": system_parts.PERCEPTION,
-        "CONTROL": system_parts.CONTROL,
-        "POLICY AVAILABILITY": policy,
-        "SUCCESS": system_parts.SUCCESS,
-    }
+        recovery=system_parts.EXPLORE_RECOVERY if exploring else "",
+        success=success,
+    )
 
 
-def user_prompt(variables: Mapping[str, object] | None = None) -> PromptNode:
-    return {"CELL": user_parts.CELL, "BEGIN": user_parts.BEGIN}
+def user_prompt(variables: Mapping[str, object] | None = None) -> dict[str, str]:
+    """Provide the current task and startup instructions."""
+    return build_user_prompt(user_parts.CELL)
 
 
 __all__ = ["system_prompt", "user_prompt"]

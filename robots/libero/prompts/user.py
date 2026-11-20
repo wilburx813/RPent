@@ -24,13 +24,9 @@ CELL = """- suite:      {{suite}}
 - recipe:     {{output_dir}}/{{recipe_tag}}_recipe.jsonl"""
 
 
-MODE = """Inspect `agentview_high.png` returned by `view_env_state`, then use
-`back_project` or `segment` to localize objects before motion."""
-
-
-BEGIN = """Read the guides, then call `view_env_state({"step": 0})` and inspect
-`task_language` and `agentview_high.png`. Read matching memory and available
-seed-0 references for the current task and scene, then localize, plan, and execute."""
+BEGIN = (
+    "After the guides, use view_env_state(step=0) to read task_language before memory."
+)
 
 WAM_MEMORY = "Local memory directory: {{memory_dir}}."
 

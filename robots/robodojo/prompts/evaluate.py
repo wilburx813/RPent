@@ -22,6 +22,8 @@ from robots.robodojo.prompts.policy import POLICY_PROMPTS
 from rpent.prompt.utils import PromptNode
 from rpent.utils.templates import substitute
 
+ROLE = "Control RoboDojo's dual ARX-X5 arms using the native task instruction in view_env_state."
+
 ROLE_AND_RULES = """You control RoboDojo's dual ARX-X5 arms through registered tools.
 Read the native task instruction in view_env_state before acting. Use images,
 depth and robot proprioception, not hidden object poses or evaluator internals.
@@ -183,16 +185,24 @@ checks, not a complete obstacle model of objects or the opposite arm.
 Choose visible clearances and conservative waypoints. Path subsampling can
 skip a planned detour. Do not claim collision-free motion or exact arrival."""
 
-REWARD = """The environment judges task success; a tool completing its
-commands does not establish success. Do not request hidden reward details."""
+PLAN = """Before moving, state a brief plan with arm roles, observable subgoals and
+the required final robot posture. Check episode_status.step_limit and remaining_steps."""
+
+CHECKS = """Check continued support through hanging withdrawal, insertion depth and
+seating, prescribed pushing method, transferred contents or deformed shape."""
+
+BUDGET = """Check episode_status.remaining_steps after motion and use read-only checks
+within the timeout. Change an unchanged analytic target after two ineffective tries."""
+
+TERMINAL = """Placement and arrangement tasks commonly require both arms back at
+their initial end-effector positions and orientations. Check this after the
+object goals are satisfied. Stop immediately on native success, even during
+a planned return."""
 
 OUTPUT_DISCIPLINE = """Record the observed outcome and uncertainties in
 {{output_dir}}/{{recipe_tag}}.json, including the native instruction, task, seed,
 layout, native_success, memory_files_read, missing references and material
-deviations from the reference strategy. Then call finish(status, summary).
-Do not claim success from a successful tool call alone. Evaluation permits one
-episode without reset. Recover in place using fresh observations and supported
-strategies; do not run an exploration sweep. Stop motion on native success."""
+deviations from the reference strategy. Then call finish(status, summary)."""
 
 
 MEMORY = """After inspecting the current instruction and scene, read these
@@ -215,58 +225,34 @@ missing, record that absence and proceed from the available relevant global
 guidance and current observations. Do not read _internal/ or failed-run drafts.
 Memory is read-only; write the evaluation audit only under {{output_dir}}.
 
-Use the JSON and task-family notes to understand phase order, observable gates,
-controller choices, recovery reasons and applicability limits. Use the JSONL
-as evidence of actual calls, SAM3 descriptions and {{policy_name}} chunk choices. A
-successful episode can include failed approaches and corrective detours:
-identify which actions made progress rather than replaying every call.
-
-Transfer strategies and checks, not scene geometry. Re-identify objects and
-destinations, measure poses, heights, clearances and held-object offsets from
-current images and depth, and choose arms for current reach unless the native
-instruction requires a particular arm. Revalidate SAM3 identity and contact
-geometry; historical pixels, coordinates and grasp offsets are not targets.
-Adapt chunk length to the next observation gate using the control rules below.
-
-Apply a global lesson only when its stated conditions match; check its limits
-and counterevidence. Distinguish observed success, a proposed explanation and
-untested applicability. Single-seed evidence, including a probable lesson,
-does not establish cross-seed reliability. The current instruction and fresh
-observations override memory. Protect achieved relations and correct only the
-remaining blocker when a reference strategy no longer fits the scene."""
+Check the JSONL for SAM3 descriptions and {{policy_name}} chunk choices. Identify
+failed detours in a successful recipe. Choose arms for current reach unless
+the native instruction fixes an arm. Revalidate SAM3 identity, contact geometry
+and held-object offsets. Check each global lesson's limits and counterevidence;
+single-seed evidence does not establish cross-seed reliability."""
 
 
-def system_prompt(
-    variables: Mapping[str, object] | None = None,
-) -> PromptNode:
-    """Assemble the evaluation prompt for the selected feedback mode."""
+def eval_fair_system_prompt(variables: Mapping[str, object]) -> PromptNode:
+    """Assemble the dedicated prompt for a client without native verdicts."""
     sections = {
         "ROLE AND RULES": ROLE_AND_RULES,
-        "READ ORDER": READ_ORDER,
-        "TOOL ACCESS": TOOL_ACCESS,
-        "PERCEPTION": PERCEPTION,
-        "AVAILABLE OPERATIONS": TOOLS,
-        "MEMORY": MEMORY,
-        "VLA AND PRIMITIVE CONTROL": CONTROL,
-        "PHASE CHECKS AND COMPLETION": PHASE_CHECKS,
-        "SAFETY": SAFETY,
-        "REWARD AND SCORE": REWARD,
-        "OUTPUT DISCIPLINE": OUTPUT_DISCIPLINE,
-    }
-    if (variables or {}).get("mode") == "eval-fair":
-        sections.pop("MEMORY")
-        sections["READ ORDER"] = (
+        "READ ORDER": (
             "Inspect view_env_state and the head and wrist images before acting. "
             "Read the native instruction, note both arms' initial end-effector "
             "positions and orientations, and bind objects, destinations and arm "
             "roles from current observations."
-        )
-        sections["REWARD AND SCORE"] = (
-            "Task success feedback is unavailable to this client."
-        )
-        sections["OUTPUT DISCIPLINE"] = (
+        ),
+        "TOOL ACCESS": TOOL_ACCESS,
+        "PERCEPTION": PERCEPTION,
+        "AVAILABLE OPERATIONS": TOOLS,
+        "VLA AND PRIMITIVE CONTROL": CONTROL,
+        "PHASE CHECKS AND COMPLETION": PHASE_CHECKS,
+        "SAFETY": SAFETY,
+        "REWARD AND SCORE": "Task success feedback is unavailable to this client.",
+        "OUTPUT DISCIPLINE": (
             "Evaluation permits one episode without reset. Call finish with your "
             "observed outcome; do not claim a verified task verdict."
-        )
-    backend = (variables or {}).get("vla_backend") or "vpp2"
+        ),
+    }
+    backend = variables.get("vla_backend") or "vpp2"
     return substitute(sections, POLICY_PROMPTS[backend])
