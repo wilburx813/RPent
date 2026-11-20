@@ -27,7 +27,6 @@ def system_prompt(variables: Mapping[str, object] | None = None) -> dict[str, st
     """Assemble the Franka evaluation system prompt."""
     return evaluate.system_prompt(
         role=system_parts.ROLE,
-        runtime=system_parts.RUNTIME,
         initialization=system_parts.INITIALIZATION,
         action=system_parts.ACTION,
         recovery=system_parts.STOP,
@@ -37,4 +36,4 @@ def system_prompt(variables: Mapping[str, object] | None = None) -> dict[str, st
 
 def user_prompt(variables: Mapping[str, object] | None = None) -> dict[str, str]:
     """Assemble the task-specific initial user prompt."""
-    return evaluate.user_prompt(user_parts.TASK, user_parts.BEGIN)
+    return evaluate.user_prompt(user_parts.TASK)

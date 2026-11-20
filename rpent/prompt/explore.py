@@ -18,8 +18,18 @@ from rpent.prompt.workflow import Workflow, user_prompt
 
 __all__ = ["system_prompt", "user_prompt"]
 
+# Opt in only when the runner uses numbered archives and these inbox paths.
+FAILED_ATTEMPT = """Before reset or an unsolved exit, save the initial plan, commands and
+parameters, observed progress, failure evidence and next change in
+{{output_dir}}/attempts/attempt_<N>_failed.json. Preserve earlier archives.
+Append the evidence to {{memory_inbox}}/wip/notes.md."""
+
+SESSION = "Session {{session_number}} of {{session_max}}."
+ATTEMPT_LIMIT = """This session allows {{explore_attempts_per_session}} attempts including
+the first (0 means unlimited)."""
+
 system_prompt = Workflow(
-    objective="""Solve the current task and learn a procedure another attempt can
+    objective="""MULTI-ATTEMPT EXPLORE MODE. Solve the current task and learn a procedure another attempt can
 use. Keep the scene, instruction and verdict of each attempt identifiable.""",
     memory="""Read available working notes from earlier attempts or sessions
 at the point specified by the local startup sequence. Check the current scene

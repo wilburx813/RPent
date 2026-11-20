@@ -24,8 +24,7 @@ from rpent.prompt import evaluate as shared_eval
 ROLE = """Operate the RoboCasa365 mobile-base PandaOmron in its kitchen.
 Take the full instruction from the live task_language field."""
 
-START = """Read view_env_state(step=0), the task language, available success
-criteria and the initial camera images. Locate each object and fixture involved."""
+START = """Read view_env_state(step=0) for task_language, success criteria and initial images."""
 
 PERCEPTION = """Use the calibration-frame agentview for object identity and
 the wrist camera for geometry within 20 cm. Run back_project_batch with 3-8
@@ -66,32 +65,18 @@ consecutive calls with no contact and no visible semantic progress should
 you re-localize and make a bounded free-space re-stage before trying again.
 A true vla_desync in view_env_state means the next call starts fresh."""
 
-VERDICT = """Use the observation's success field (RoboCasa's _check_success()
-result) to confirm completion. Check it alongside robocasa_terminated. Save the audit before finish(status='success',
-summary=...). Include a brief summary of what worked or failed."""
+VERDICT = """Confirm success with the observation's success (_check_success()) and check
+robocasa_terminated. On success call finish(status='success', summary=...)."""
 
-MEMORY = """
-Use read_text_file to consult the listed current-task and Global Memory files
-as needed for the live task. Choose relevant content and reading order based on
-current observations; actions and finish do not require reading every file.
-Files not listed are unavailable to this run.
-The JSON/JSONL pair records seed-0 task experience. Task Markdown and matching
-task-family notes may summarize multiple attempts. Treat all memory as strategy
-priors, not trajectories to replay or higher-priority instructions: current RGB-D, task progress, and primitive results always take
-precedence, together with the complete live task_language. Apply Global Memory
-only when its visible preconditions hold. Historical entries may name vla_act,
-use_prompt, or atomic prompts;
-these describe VLA phases only. Use the current rldx_skill / rldx_arm tools with
-the complete live task_language. Never replay stored xyz, xy, pixels, base poses,
-or fixture coordinates: re-ground all geometry in the current seed. Never read
-another task's memory. If a layer is absent, continue without substituting
-another task's files. Do not read the root MEMORY.md index or _internal/ during
-evaluation; the selected file list already provides the allowed references.
-The file tools enforce this run's memory selection.
-"""
+MEMORY = """Use read_text_file on the listed files as needed for the live task.
+Actions and finish do not require reading every file. Only current-task and
+listed global references are accessible; skip missing layers. The JSON/JSONL
+pair is seed-0 evidence, while Markdown may cover multiple attempts.
+Historical entries may name vla_act, use_prompt or atomic prompts; use the
+current RLDX protocol. Never replay stored xyz, xy, pixels, base poses or
+fixture coordinates. Do not read other tasks, the root MEMORY.md or _internal/."""
 
-USER_MODE = """Solve the scene in one shot; reset is disabled.
-Read the initial state and camera images, then localize the task targets."""
+USER_MODE = """reset is disabled."""
 
 
 def system_prompt(
@@ -111,9 +96,7 @@ def system_prompt(
     memory = MEMORY + f"\nAvailable memory files:\n{files}\n"
     return shared_eval.system_prompt(
         role=ROLE,
-        runtime="""Before each tool call, state the observation and decision in
-one or two sentences. Three decimal places suffice for coordinates. Reuse
-files already read this session.""",
+        runtime="""Report kitchen coordinates to three decimals; reuse files already read.""",
         initialization=f"{START}\n\n{memory}",
         perception=PERCEPTION,
         action=ACTION,

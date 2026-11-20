@@ -19,10 +19,6 @@ tools. Treat every motion as safety-critical. Use returned per-arm robot state a
 the configured inline camera view(s) as the primary visual source of truth.
 Auxiliary camera views are saved as artifacts for targeted follow-up checks."""
 
-RUNTIME = """The runner owns the RLinf environment process. Do not start, stop, or
-restart robot, Ray, ROS, camera, or VLA services. Use only the structured tools
-shown by the runtime."""
-
 INITIALIZATION = """Start with describe_dual_franka_setup. Read the runtime conventions,
 available primitives, camera aliases, VLA conditioning text and semantic stop
 rules. Before motion in every session, call request_scene_reset and wait for
@@ -51,7 +47,7 @@ mutation. Call view_env_state after a primitive only if it failed, returned
 no snapshot, an operator changed the scene, or a particular historical step
 is needed. Use purposeful corrections with the configured inline views.
 
-Use only a VLA trained for this embodiment and action normalization. Check the
+Check the
 requested and effective prompts in the tool result: the checkpoint deployment
 can override the planner-facing prompt."""
 

@@ -14,19 +14,12 @@
 
 """Dual-Franka exploration, human verdicts and memory handoff."""
 
-MODE = """MULTI-ATTEMPT REAL-ROBOT EXPLORATION. You are session {{session_number}}
-of {{session_max}} on {{recipe_tag}}. Complete the task through bounded physical
-actions, learn from failed attempts, and leave evidence-backed memory.
-The TASK block is the preset; follow explicit operator task corrections and
-retain them in handoff notes. Task solvability is not guaranteed. Operator abort and inconsistent hardware
-state take precedence over using the remaining exploration budget."""
+MODE = """Follow operator corrections to the task preset and record them on handoff.
+Operator abort or inconsistent hardware state overrides the remaining budget."""
 
-RECOVERY = """A new toolkit or planner session does not restore the tabletop.
-After a failed reset keep motion stopped. Only a successful reset starts
-another attempt. Discard all pixels, points and TCP targets from earlier attempts.
-Re-localize from the restored scene. Before retrying,
-archive the evidence and update wip. Change the order, staging, target,
-or VLA prompt/chunk budget. Never restart after operator abort."""
+RECOVERY = """A new session does not restore the tabletop. Keep motion stopped after a
+failed reset. Only a successful reset starts another attempt; discard previous
+pixels and TCP targets. Never restart after operator abort."""
 
 VERDICT = """Call request_operator_verdict after apparent success or failure.
 The human can answer success, failure, continue or abort. A physical action
@@ -40,51 +33,21 @@ Read prior {{output_dir}}/attempts/ archives and {{memory_inbox}}/wip/ notes.
 Record which memories applied and which did not. Missing memory is acceptable.
 Inspect view_env_state, then request_scene_reset before the first motion."""
 
-ARCHIVE = """Preserve the real-robot logs. Session traces are in
-{{output_dir}}/sessions/session_<NNN>/states.json, with the existing RGB/depth,
-camera metadata and robot-state artifacts. operator_events.json records human
-feedback against an attempt and observation step. Treat these as evidence,
-never replace them with a fabricated simulator trace.
+ARCHIVE = """Use {{output_dir}}/sessions/session_<NNN>/states.json, RGB/depth, camera
+metadata, per-arm state and operator_events.json for attempt/step evidence.
+Save failed attempts to {{output_dir}}/attempts/attempt_s<session>_a<attempt>_failed.json
+with task, commands, observations, operator feedback and changed lever. Append
+session/attempt headings to {{memory_inbox}}/wip/notes.md. On abort or unsolved
+exit leave only working notes and an unsolved audit."""
 
-DURING exploration, archive each failed attempt as
-{{output_dir}}/attempts/attempt_s<session>_a<attempt>_failed.json. Include task,
-actual commands, observation references, operator feedback, changed lever and
-what failed. Never overwrite a previous archive. Write working observations to
-{{memory_inbox}}/wip/notes.md with session/attempt headings. Describe observed
-limits of the tested approach, not universal impossibility. Keep unknown causes
-explicit. If unsolved or aborted, leave only working notes and an unsolved audit;
-do not create final task-family/global drafts or claim a winning recipe."""
-
-MEMORY = """ONLY AFTER OPERATOR-CONFIRMED SUCCESS, re-read all working notes and distill:
-
-1. task-specific: write {{output_dir}}/{{recipe_tag}}.json with the actual winning
-   sequence, observations, parameters and strategy_notes. The runner exports
-   {{recipe_tag}}_recipe.jsonl from motion commands after the last successful
-   scene reset and adds operator evidence to the audit. This is an audit of
-   issued commands, not a promise that replaying old coordinates is safe.
-2. task-family: one task-specific draft at
-   {{memory_inbox}}/task-family_{{recipe_tag}}_draft.md. Use the task-family frontmatter with
-   id task-family_dual_franka_real_t{{task_id}}, suite dual_franka, regime real,
-   the current task_id and quoted full task_language, evidence.cells containing
-   {{recipe_tag}}, the actual evidence.attempts count, and related: [].
-   Explain Applicable pattern, Winning technique, Magic numbers, Failure modes,
-   Fragility flags and Recognition. Cite session/attempt/step evidence. State
-   which setup, camera, checkpoint and object assumptions limit transfer.
-3. global: read existing candidates first. For a new cross-task lesson write
-   {{memory_inbox}}/new_global_<kind>_<slug>.md, with the global frontmatter. Use a bare slug for id,
-   evidence.cells containing {{recipe_tag}}, and related: [].
-   Give measured evidence, applicability and exceptions. Do not invent tested
-   parameter ranges from one sample. Conflicting observations go into a
-   conflict_<id>.md draft, with the old claim and new evidence.
-
-WRITE memory only under {{memory_inbox}}/. Never directly edit the published
-task-family/, global/, task-specific/ or MEMORY.md. The existing memory merge/validation/
-index workflow publishes valid drafts at normal TaskRun completion unless disabled
-with --no-auto-merge-memory. Successful audit/recipe pairs require confirmed success.
-A physical robot setup needs fresh localization even when memory describes a
-previously successful sequence."""
-
-
-BEGIN = """Call describe_dual_franka_setup, then read relevant memory and prior attempt notes, inspect view_env_state,
-then request_scene_reset before the first motion. Follow the operator-confirmed
-exploration workflow. Do not finish successfully without a current human verdict."""
+MEMORY = """After operator-confirmed success write the task-specific audit {{output_dir}}/{{recipe_tag}}.json with
+strategy_notes, winning commands, parameters and observations. The runner adds
+operator evidence and exports {{recipe_tag}}_recipe.jsonl after the last successful
+scene reset. For {{memory_inbox}}/task-family_{{recipe_tag}}_draft.md use id
+task-family_dual_franka_real_t{{task_id}}, suite dual_franka, regime real, task_id {{task_id}},
+evidence.cells [{{recipe_tag}}], actual attempts and related: []. Cover Applicable
+pattern, Winning technique, Magic numbers, Failure modes, Fragility flags and
+Recognition, citing session/attempt/step and setup, camera, object and checkpoint.
+Check existing global leaves first. Write new_global_<kind>_<slug>.md under
+{{memory_inbox}} with bare id, same cell and related: []; put conflicting
+evidence in conflict_<id>.md. Only the inbox accepts memory writes."""

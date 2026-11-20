@@ -14,94 +14,30 @@
 
 """RoboDojo exploration prompt for transferable manipulation memory."""
 
-GOAL = """Solve the current task at its fixed seed and layout, then produce
-evidence-backed memory for evaluation on other seeds and layouts. This is
-exploration session {{session_number}} of {{session_max}}. A successful episode
-provides a strategy to adapt, not a trajectory to replay unchanged."""
+READ_ORDER = """Read {{memory_dir}}/MEMORY.md, matching task-family/global leaves and
+successful task-specific pairs for {{policy_name}} cadence, then read
+{{memory_inbox}}/wip/notes.md when present."""
 
-READ_ORDER = """Before the first robot action:
-1. Read robots/robodojo/guides/GUIDE_RPENT.md completely.
-2. Inspect view_env_state and the head and wrist images. Read the native task
-   instruction and note both arms' initial end-effector positions and orientations.
-3. Read {{memory_dir}}/MEMORY.md when present and relevant task-family notes.
-   Consult matching global lessons and successful task-specific JSON/JSONL pairs.
-4. Read {{memory_inbox}}/wip/notes.md when present.
+RULES = """reset restores the same seed group and layout. {{retry_strategy}}
+Unsolved finish is refused while a finite attempt budget remains; reset is
+refused after native success."""
 
-Use the successful recipe to inspect {{policy_name}} cadence. Preserve arm roles
-required by the native instruction and reconsider layout-specific roles. If
-memory is absent, proceed from observation."""
-
-RULES = """This session allows {{explore_attempts_per_session}} attempts including the
-initial episode (0 means no attempt-count limit; other run limits still apply).
-
-Prefer in-place recovery when possible. reset restores the same task, seed
-group and layout. Re-run perception and do not reuse stale pixels or coordinates.
-Before each reset or unsolved finish, save the attempt number, actual commands,
-observed progress, failure evidence and next changed strategy variable under
-{{output_dir}}/attempts/attempt_<N>_failed.json. Never overwrite an earlier
-attempt. Append bounded observations to {{memory_inbox}}/wip/notes.md.
-{{retry_strategy}} Do not infer that a task is
-impossible from one unsuccessful approach; record unknown causes as unknown.
-An unsolved finish is refused while a finite attempt budget remains. After
-native success, stop motion; reset is refused. Use the remaining turns to
-record what worked and the uncertainties before calling finish."""
-
-OUTPUT = """Reserve time to close out the attempt and write
-{{output_dir}}/{{recipe_tag}}.json before calling finish. Include task, seed,
+OUTPUT = """Before finish write {{output_dir}}/{{recipe_tag}}.json with task, seed,
 layout, verbatim instruction, attempts, native_success, final_state,
-memory_files_read and uncertainties. If unsolved, reference the failed-attempt
-archives and claim no successful trajectory.
+memory_files_read and uncertainties. Reference failed archives on an unsolved exit.
+On success, strategy_notes must cover every exported action and successful SAM3
+mask call since the last reset: actual parameters, trace step, phase, result
+and reason for {{policy_name}}/primitive switches. The runner publishes the
+audit with {{recipe_tag}}_recipe.jsonl only on native success."""
 
-On success, re-read the current attempt's recorded trajectory, starting after
-the most recent reset if one occurred.
-Its ordered strategy_notes must account for every exported action and SAM3
-call with actual parameters, trace step, phase, observed result and the reason
-for any {{policy_name}}/primitive switch. Do not invent, omit or reorder calls.
-The runner exports {{recipe_tag}}_recipe.jsonl from recorded motion commands
-and SAM3 calls that found a mask without an error, in invocation order.
-Finding a mask does not establish correct identity. Historical pixels, steps
-and coordinates are evidence, not targets to replay on a new layout.
-The audit/recipe pair is published only when native success is confirmed."""
-
-MEMORY = """Only after success, consolidate working notes and the successful
-trajectory into {{memory_inbox}}/task-family_{{recipe_tag}}_draft.md. Write a
-compact reference that helps evaluation adapt the strategy to a new scene:
-- Recognition: observed visual cues, useful SAM3 descriptions and how identity
-  was checked; distinguish object recognition from locating a contact feature.
-- Phase plan: prerequisites, actions, visible completion gates, protected
-  relations and terminal actions. Explain arm roles and whether the instruction
-  requires them or the observed layout motivated them.
-- Control choices: {{memory_control}}, Primitive use, chunk choices and the
-  observed reason for continuing or switching. Keep exact tested parameters in
-  the audit; include reusable settings with their conditions of use.
-- Action costs: record observed costs for the main phases and required terminal
-  motions, distinguishing productive actions from failed attempts and recovery.
-  Treat these costs as evidence from this episode, not fixed budgets for new
-  scenes. Use recorded action counters; do not invent missing measurements.
-- Adaptation: what to re-identify, measure or decide on a new seed/layout,
-  including approach geometry, grasp offsets, clearance and release conditions.
-- Recovery and limits: failure evidence, changes tried, what subsequently
-  worked, unresolved causes and situations where the strategy may not apply.
-
-Separate observed outcomes from explanations. A successful retry does not prove
-which change caused improvement. Do not invent causes or parameter ranges.
-Keep scene coordinates in the audit, not reusable guidance. One seed/layout
-supports single-shot confidence, even after several attempts; it does not
-establish robustness across scenes. Use the recorded evidence after success,
-not additional robot motion, to prepare memory.
-In the task-family frontmatter use suite robodojo, regime {{env_cfg_type}},
-task_id {{task}}, the verbatim native instruction as task_language, and
-evidence.cells ["{{recipe_tag}}"] with the actual number of attempts.
-
-When evidence supports a cross-task lesson, write a separate
-{{memory_inbox}}/new_global_<lesson-id>.md. Use scope: global, a bare descriptive
-id, title, applies_when, kind (one of primitive, perception, strategy, failure,
-infra), and the same evidence and confidence fields. State the observation,
-how to apply it, its limits and what would falsify it. A single layout warrants
-single-shot confidence only. Read existing relevant leaves before proposing
-a lesson; avoid duplicates and record contradicting evidence explicitly.
-If no new global lesson is supported, say so rather than inventing one.
-
-During failed attempts, write lessons only in wip/. Never write directly to
-published memory. The shared finalizer merges valid inbox proposals and updates
-MEMORY.md after the run; do not claim publication before it completes."""
+MEMORY = """Write {{memory_inbox}}/task-family_{{recipe_tag}}_draft.md with suite
+robodojo, regime {{env_cfg_type}}, task_id {{task}}, evidence.cells
+["{{recipe_tag}}"] and actual attempts. Record useful SAM3 descriptions for
+objects and contact features, required vs layout-dependent arm roles, phase
+gates and final posture, {{memory_control}}, switching points, and observed
+native action costs for productive, recovery and terminal motions.
+Include layout-dependent offsets, clearances, failures and limits.
+For a distinct cross-task finding write {{memory_inbox}}/new_global_<lesson-id>.md
+with a bare id and a falsifying observation. Check existing leaves for duplicates
+and counterevidence. Failed attempts write only to wip/. The finalizer publishes
+validated proposals and updates MEMORY.md."""

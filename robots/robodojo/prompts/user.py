@@ -23,8 +23,3 @@ TASK = """- task:   {{task}}
 - control: analytic joint targets and {{policy_control}}
 - output_dir: {{output_dir}}
 - scene (static hint): {{task_summary}}"""
-
-BEGIN = """Call `view_env_state` first to read the instruction, observe the scene
-and check the native action budget before planning. Localize relevant targets,
-act through the registered primitives, inspect execution feedback, and record
-the outcome before finishing."""

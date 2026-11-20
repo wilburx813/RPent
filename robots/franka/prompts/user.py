@@ -20,6 +20,3 @@ TASK = """- task_name: {{task_name}}
 
 Task constraints:
 {{constraints}}"""
-
-BEGIN = """Call view_env_state with step 0, inspect both camera views and the TCP
-state, then execute the task conservatively."""

@@ -188,17 +188,11 @@ skip a planned detour. Do not claim collision-free motion or exact arrival."""
 PLAN = """Before moving, state a brief plan with arm roles, observable subgoals and
 the required final robot posture. Check episode_status.step_limit and remaining_steps."""
 
-CHECKS = """For hanging, check support through withdrawal. For insertion, inspect
-orientation and seating. During handover, verify receiver hold before giver
-release and again after separation. Preserve a required pushing method. For
-material transfer or deformation, inspect the contents or shape itself. In
-multi-object work, check counts and protect objects held by the other arm."""
+CHECKS = """Check continued support through hanging withdrawal, insertion depth and
+seating, prescribed pushing method, transferred contents or deformed shape."""
 
-BUDGET = """Native success must occur before the action budget runs out. Compare
-remaining_steps with the observed cost of all unfinished phases after each motion.
-Allow time for support, release, settling, withdrawal and any final posture.
-Use read-only checks within the timeout. After two ineffective repetitions of
-an unchanged analytic target, re-observe and change the plan."""
+BUDGET = """Check episode_status.remaining_steps after motion and use read-only checks
+within the timeout. Change an unchanged analytic target after two ineffective tries."""
 
 TERMINAL = """Placement and arrangement tasks commonly require both arms back at
 their initial end-effector positions and orientations. Check this after the

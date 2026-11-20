@@ -29,8 +29,7 @@ def system_prompt(variables: Mapping[str, object] | None = None) -> dict[str, st
     exploring = (variables or {}).get("mode") == "explore"
     if exploring:
         return explore.system_prompt(
-            role=system.ROLE + "\n\n" + exploration.MODE,
-            runtime=system.RUNTIME,
+            role="\n".join((system.ROLE, explore.SESSION, exploration.MODE)),
             initialization=system.INITIALIZATION + "\n\n" + exploration.READ_ORDER,
             perception=system.PERCEPTION,
             action=system.ACTION,
@@ -42,7 +41,6 @@ def system_prompt(variables: Mapping[str, object] | None = None) -> dict[str, st
         )
     return evaluate.system_prompt(
         role=system.ROLE,
-        runtime=system.RUNTIME,
         initialization=system.INITIALIZATION,
         perception=system.PERCEPTION + "\n\n" + system.LOCALIZATION_TABLE,
         action=system.ACTION,
@@ -54,8 +52,4 @@ def system_prompt(variables: Mapping[str, object] | None = None) -> dict[str, st
 
 def user_prompt(variables: Mapping[str, object] | None = None) -> dict[str, str]:
     """Place the current task, constraints and startup sequence in the user message."""
-    exploring = (variables or {}).get("mode") == "explore"
-    return build_user_prompt(
-        user.TASK,
-        exploration.BEGIN if exploring else user.BEGIN,
-    )
+    return build_user_prompt(user.TASK)

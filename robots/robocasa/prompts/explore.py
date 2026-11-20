@@ -4,9 +4,7 @@
 from robots.robocasa.prompts import evaluate as base
 from rpent.prompt import explore
 
-ROLE = """MULTI-ATTEMPT EXPLORE: You are agent {{session_number}} of up to
-{{session_max}} on this cell. Treat the task as solvable and failures as
-evidence about the approach tried."""
+ROLE = """Treat RoboCasa benchmark tasks as solvable."""
 
 MEMORY = """
 Before acting, use `list_dir` directly on `{{memory_dir}}/task-specific/`,
@@ -21,46 +19,26 @@ sessions. These directories may not exist yet; if `list_dir` reports
 accessible.
 """
 
-RECOVERY = """Before reset, first write
-`{{output_dir}}/attempts/attempt_<N>_failed.json`. Record the attempt number,
-initial plan, commands and parameters tried, observed progress, bounded failure
-mechanism, and the next lever (stance, ordering, contact geometry, primitive
-family, or action parameter). Append that evidence to
-`{{memory_inbox}}/wip/notes.md`. Reset only for an unrecoverable or
-deliberately completed experiment. Inspect all cameras in the new episode.
-An unsolved finish is refused while a positive attempt budget has attempts left."""
+RECOVERY = """Reset only for an unrecoverable or deliberately completed experiment;
+inspect all cameras after reset. An unsolved finish is refused while attempts remain."""
 
-REPORTING = """Write the winning audit to `{{output_dir}}/{{recipe_tag}}.json`.
-Keep working notes in `{{memory_inbox}}/wip/`; put proposed task-family and
-global Markdown files directly under `{{memory_inbox}}/`. For task-family
-frontmatter set suite: robocasa, regime: {{split}}, task_id: {{task_name}} and
-task_language to the verbatim initial instruction. For both types set
-evidence.cells to [{{recipe_tag}}] and include attempts, solved_seeds and
-failed_seeds for the recorded runs (this seed is {{seed}}).
+REPORTING = """Write the audit to {{output_dir}}/{{recipe_tag}}.json and memory drafts
+directly under {{memory_inbox}}/. Use suite: robocasa, regime: {{split}},
+task_id: {{task_name}}, evidence.cells [{{recipe_tag}}], attempts and seed
+lists for seed {{seed}}. Include recognition cues, order, parameter ranges,
+task_progress milestones and the failure table. The runner exports commands
+after the last reset and merges validated drafts."""
 
-For task-family proposals include recognition cues, technique, ordering,
-robust parameter ranges, task_progress milestones and a failure table.
-Reserve global proposals for cross-task lessons with observed evidence and
-applicability. Mark unknown causes explicitly. Consolidate the inbox before
-finish. The runner exports the winning commands after the final reset and
-merges validated proposals into the published corpus."""
-
-USER_MODE = """
-Explore mode is active. `reset` starts a fresh attempt and is expected when an
-episode becomes unrecoverable. The attempt limit is {{explore_attempts_per_session}}
-(0 means unlimited). Test a distinct approach each attempt and preserve
-useful evidence for the next session. Start with the
-initial camera views and published memory, then check the current inbox.
-"""
+USER_MODE = explore.ATTEMPT_LIMIT
 
 
 def system_prompt() -> dict[str, str]:
     return explore.system_prompt(
-        role=f"{base.ROLE}\n\n{ROLE}",
+        role=f"{base.ROLE}\n{explore.SESSION} {ROLE}",
         initialization=f"{base.START}\n\n{MEMORY}",
         perception=base.PERCEPTION,
         action=base.ACTION,
         action_model_guidance=base.VLA_RULES,
-        recovery=RECOVERY,
+        recovery=f"{explore.FAILED_ATTEMPT}\n{RECOVERY}",
         success=f"{base.VERDICT}\n\n{REPORTING}",
     )

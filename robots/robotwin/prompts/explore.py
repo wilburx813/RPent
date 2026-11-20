@@ -15,6 +15,7 @@
 """RoboTwin session budgets and the file contract for exploration."""
 
 from robots.robotwin.prompts import system
+from rpent.prompt import explore
 
 READ_ORDER = """Before the first robot mutation:
 1. Read robots/robotwin/guides/GUIDE_RPENT.md completely.
@@ -22,15 +23,14 @@ READ_ORDER = """Before the first robot mutation:
 3. Read relevant published task, task-family, and global memory.
 4. Read {{memory_inbox}}/wip/ for notes from earlier attempts or sessions."""
 
-RECOVERY = (
-    system.BUDGET
-    + "\n\n"
-    + """Session {{session_number}} of {{session_max}}; attempt budget:
-{{explore_attempts_per_session}} (0 means no attempt-count limit). Before reset,
-write {{output_dir}}/attempts/attempt_<N>_failed.json with the approach,
-commands, parameters, observed progress, failure evidence and next change.
-Append a handoff note to {{memory_inbox}}/wip/notes.md. Reset may resample
-the layout. An unsolved finish is refused while attempts remain."""
+RECOVERY = "\n".join(
+    (
+        system.BUDGET,
+        explore.SESSION,
+        explore.ATTEMPT_LIMIT,
+        explore.FAILED_ATTEMPT,
+        "Reset may resample the layout. An unsolved finish is refused while attempts remain.",
+    )
 )
 
 SUCCESS = (

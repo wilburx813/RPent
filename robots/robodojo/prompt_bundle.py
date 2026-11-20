@@ -39,9 +39,16 @@ def system_prompt(
     exploring = variables.get("mode") == "explore"
     workflow = explore if exploring else evaluate
     if exploring:
-        role = f"{evaluate_parts.ROLE}\n\n{explore_parts.GOAL}"
-        startup = explore_parts.READ_ORDER
-        recovery = f"{evaluate_parts.BUDGET}\n\n{explore_parts.RULES}"
+        role = f"{evaluate_parts.ROLE}\n\n{explore.SESSION}"
+        startup = f"{evaluate_parts.READ_ORDER}\n{explore_parts.READ_ORDER}"
+        recovery = "\n".join(
+            (
+                evaluate_parts.BUDGET,
+                explore.ATTEMPT_LIMIT,
+                explore.FAILED_ATTEMPT,
+                explore_parts.RULES,
+            )
+        )
         output = f"{explore_parts.OUTPUT}\n\n{explore_parts.MEMORY}"
     else:
         role = evaluate_parts.ROLE
@@ -72,7 +79,6 @@ def user_prompt(
         user_parts.TASK.replace(
             "{{policy_control}}", POLICY_PROMPTS[backend]["policy_control"]
         ),
-        user_parts.BEGIN,
     )
 
 

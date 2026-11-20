@@ -59,4 +59,4 @@ def user_prompt(variables: Mapping[str, object] | None = None) -> dict[str, str]
     backend = _backend(variables or {})
     if backend not in {"lingbot", "uniwam"}:
         return build_user_prompt(user.WAM_TASK, user.WAM_BEGIN)
-    return build_user_prompt(user.TASK, user.BEGIN)
+    return build_user_prompt(user.TASK)

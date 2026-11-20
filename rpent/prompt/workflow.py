@@ -25,7 +25,11 @@ robot through shell, Python, network clients or legacy command files. Use only
 observations and references authorized for this run. Do not inspect task source,
 evaluator internals, hidden rewards, ground-truth object poses, raw expert
 trajectories or unapproved historical geometry. Use measured robot state and
-camera-derived geometry exposed by the registered tools."""
+camera-derived geometry exposed by the registered tools. Briefly state the
+observation and next decision before calling a tool. Use observations returned
+by actions; request another view when additional evidence is needed.
+Never start, stop or restart runner-owned services.
+Use only policies trained for the embodiment and its action normalization."""
 
 INITIALIZATION = """Take the goal from the current task instruction and the scene from fresh
 observations. Use approved memory only when it fits both. When a semantic
@@ -85,6 +89,8 @@ Apply only the checks relevant to the instruction:
   from subsequent paths. Order alone does not imply vertical stacking.
 - Orientation or hold: verify the requested pose while maintaining control;
   keep holding when the task asks for a lift, shake or sustained hold.
+- Handover: verify the receiving hand holds the object before giver release
+  and after separation. Track each hand's contents throughout bimanual tasks.
 - Containment: verify that the object crosses the opening and is supported inside.
   For placement on a surface, check support and the requested relation instead."""
 
@@ -162,6 +168,8 @@ class Workflow:
         }
 
 
-def user_prompt(task: str, begin: str) -> dict[str, str]:
+def user_prompt(
+    task: str, begin: str = "Follow the startup sequence in INITIALIZATION AND MEMORY."
+) -> dict[str, str]:
     """Keep per-run constraints with the task and startup instructions in BEGIN."""
     return {"TASK": task, "BEGIN": begin}

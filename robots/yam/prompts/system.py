@@ -9,15 +9,10 @@ The three cameras are top, left wrist, and right wrist. The robot state and
 actions are qpos14: [left six joints, left gripper, right six joints, right
 gripper], with gripper 0=closed and 1=open."""
 
-READ_ORDER = """Before the first robot mutation:
-1. Read robots/yam/guides/GUIDE_RPENT.md completely.
-2. Inspect view_env_state(step=0) and all three current RGB views.
-3. Read {{memory_dir}}/MEMORY.md and matching task-specific/task-family/global memory when present.
-   List {{memory_dir}}/task-specific/ for prior recipe/audit pairs for this task; the index
-   covers task-family/global leaves. Missing memory on a first run is normal: continue
-   from current observations and create evidence through this run.
-
-Use the current three views to validate any prior recipe."""
+READ_ORDER = """Before motion read robots/yam/guides/GUIDE_RPENT.md, then inspect
+view_env_state(step=0) and all three RGB views. Use {{memory_dir}}/MEMORY.md for
+task-family/global leaves and list {{memory_dir}}/task-specific/ for this task's
+recipe/audit pairs. On a first run these files may be absent."""
 
 RUNTIME = """Re-observe after every motion. The env server runs on the control machine and is responsible for CAN ownership,
 camera lifetime, and operator success marking. When enabled in the site config,
@@ -92,8 +87,7 @@ verdict. A finish-refused response keeps the session active.
 Never invent a verdict or create a readiness or success receipt. On operator
 abort, stop motion and call finish(status="failure") immediately."""
 
-EXPLORE_START = """Your cell is {{recipe_tag}}, session {{session_number}} of
-{{session_max}}. After reading published memory, check {{memory_inbox}}/wip/
+EXPLORE_START = """For {{recipe_tag}}, after reading published memory, check {{memory_inbox}}/wip/
 for earlier attempt notes. A new session does not reset the physical scene.
 At startup, if ready_for_motion is false, call reset and wait for operator
 ready before motion. After a completed reset, inspect all three fresh views
@@ -126,13 +120,10 @@ spends no attempt. Wait for the operator's matching ready receipt before
 retrying reset. When finish returns retry after operator-confirmed failure, record the lesson
 and reset only after scene restoration. Use remaining attempts for a changed approach."""
 
-EXPLORE_REPORTING = """After confirmed success re-observe and write
-{{memory_inbox}}/technique.md before finish. Set task-family frontmatter to
-suite: yam, regime: real, task_id: {{task_id}}, the actual env instruction
-as task_language, and evidence.cells: ["{{recipe_tag}}"]. Include mechanisms,
-object recognition, measured parameters, failed alternatives, operator
-intervention and evidence limits. Use probable/verified only with additional
-independent successful trials. The runner creates the successful current-attempt
-recipe/audit pair. Only the current inbox is writable. Unsolved attempts
-leave working notes in wip/; bounded failure lessons can be merged by
-MemoryManager with explicit failed evidence."""
+EXPLORE_REPORTING = """After confirmed success re-observe and write {{memory_inbox}}/technique.md
+before finish. Use suite: yam, regime: real, task_id: {{task_id}}, live task_language
+and evidence.cells: ["{{recipe_tag}}"]. Record object recognition, measured
+parameters, failed alternatives and operator intervention. Reserve probable/verified
+for independent successful trials. The runner creates the current-attempt
+recipe/audit pair. Only the current inbox is writable. Unsolved notes stay in wip/; MemoryManager can merge bounded
+failure lessons with explicit failed evidence."""

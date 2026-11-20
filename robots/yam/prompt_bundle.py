@@ -26,7 +26,7 @@ def system_prompt(variables: Mapping[str, object] | None = None) -> dict[str, st
     initialization = system_parts.READ_ORDER
     success = system_parts.SUCCESS
     if exploring:
-        initialization += "\n\n" + system_parts.EXPLORE_START
+        initialization += "\n\n" + explore.SESSION + " " + system_parts.EXPLORE_START
         success += "\n\n" + system_parts.EXPLORE_REPORTING
     else:
         success += "\n\nEvaluation memory is read-only."
@@ -48,7 +48,7 @@ def system_prompt(variables: Mapping[str, object] | None = None) -> dict[str, st
 
 def user_prompt(variables: Mapping[str, object] | None = None) -> dict[str, str]:
     """Provide the current task and startup instructions."""
-    return build_user_prompt(user_parts.CELL, user_parts.BEGIN)
+    return build_user_prompt(user_parts.CELL)
 
 
 __all__ = ["system_prompt", "user_prompt"]

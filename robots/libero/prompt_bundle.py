@@ -44,9 +44,7 @@ def user_prompt(variables: Mapping[str, object] | None = None) -> PromptNode:
         return workflow_user_prompt(
             user_parts.CELL + "\n" + user_parts.WAM_MEMORY, user_parts.WAM_BEGIN
         )
-    return workflow_user_prompt(
-        user_parts.CELL, user_parts.BEGIN + "\n" + user_parts.MODE
-    )
+    return workflow_user_prompt(user_parts.CELL, user_parts.BEGIN)
 
 
 __all__ = ["system_prompt", "user_prompt"]

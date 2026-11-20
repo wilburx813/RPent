@@ -14,9 +14,7 @@
 
 """Local RoboTwin instructions for the shared manipulation workflow."""
 
-ROLE = """Control the dual-arm RoboTwin through a {{task_config}} episode. Satisfy
-the current task_language and prefer one accurate sequence supported by an
-applicable recipe when available."""
+ROLE = """Control the dual-arm RoboTwin in {{task_config}} using the native task_language."""
 EVAL_ACCESS = "Use only the curated references under {{memory_dir}}; do not inspect another attempt."
 READ_ORDER = """Before the first robot mutation:
 1. Read robots/robotwin/guides/GUIDE_RPENT.md completely.
@@ -28,22 +26,12 @@ READ_ORDER = """Before the first robot mutation:
 PERCEPTION = """Identify candidates in the head view and refine the same candidate
 in its matching wrist view. Index the world map at [row,col] to
 obtain world [x,y,z] in metres."""
-CONTROL = """Use one chunk near contact, near success, instability, or for a
-small correction; two for ordinary stable progress; three only for a
-recipe-supported continuity-sensitive phase already moving correctly. When VLA
-has correct contact and visible progress, avoid interrupting it with speculative
-primitives. Repeated VLA calls are allowed; after an unproductive chunk, use
-fresh evidence to choose whether to continue, shorten the next chunk, or improve
-binding, visibility, or physical staging first.
-
-Prefer VLA for receiving-arm grasps and bimanual coordination. For planner residuals,
-guarded low approaches, physical state shaping, and wrist-sweep safety, follow
-robots/robotwin/guides/GUIDE_RPENT.md and re-observe after every primitive.
-
-Bimanual or multi-object: track each hand's content and ownership. Preserve
-  useful continuous VLA coordination; for a true handover, verify receiver hold
-  before giver release. A task name alone does not prove that handover is
-  required."""
+CONTROL = """Use one chunk near contact, instability or success; two for stable progress;
+three only for a recipe-supported continuity-sensitive phase already moving
+correctly. Repeated VLA calls are allowed. Prefer VLA for receiving-arm grasps
+and bimanual coordination. A task name alone does not require a handover.
+For planner residuals, guarded low approaches, physical state shaping and wrist
+sweeps follow robots/robotwin/guides/GUIDE_RPENT.md."""
 BUDGET = """Track step_lim - take_action_cnt. Use the same-task recipe as a guide
 to expected phase count. After two ineffective repetitions of an unchanged
 analytic target, re-observe and change it; this threshold does not cap model calls."""
