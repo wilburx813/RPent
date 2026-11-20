@@ -387,6 +387,7 @@ def _parse_config(args: argparse.Namespace) -> RunConfig:
         "enable_direct_action": getattr(args, "enable_direct_action", False),
         "memory_profile": memory_profile,
         "reference_tag": f"{args.suite.replace('libero_', '')}_t{args.task}_s0",
+        "attempts_per_session": getattr(args, "explore_attempts_per_session", 0),
         "session_number": 1,
         "session_max": max(1, args.explore_sessions) if explore else 1,
     }

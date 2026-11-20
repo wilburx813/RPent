@@ -222,3 +222,38 @@ def test_env_rpc_session_stop_and_failed_shutdown():
     assert facade._dispatch("healthz", (), {}, session_id="probe") == {"status": "ok"}
     assert facade._dispatch("shutdown", (), {}, session_id="probe") == {"ok": True}
     assert facade._shutdown_event.is_set()
+
+
+@pytest.mark.parametrize("exploring", [False, True])
+@pytest.mark.parametrize("task_id", [0, 1])
+def test_run_prompts_keep_policy_and_operator_protocols(exploring, task_id):
+    from robots.yam.manual import _build_parser
+    from robots.yam.robot_spec import _parse_config, get_robot_spec
+    from rpent.prompt.utils import format_prompt
+
+    args = _build_parser().parse_args(
+        [
+            "--mode",
+            "vla",
+            "--task-id",
+            str(task_id),
+            "--env-endpoint",
+            "socket://localhost:8110",
+            "--am-endpoint",
+            "socket://localhost:8220",
+        ]
+    )
+    args.explore = exploring
+    variables = _parse_config(args).prompt_vars
+    prompts = get_robot_spec().prompts
+    system = format_prompt(prompts.system(variables), variables=variables)
+    user = format_prompt(prompts.user(variables), variables=variables)
+
+    assert variables["instruction"] in user
+    assert "eval_success=true" in system
+    assert "If finish returns pending" in system
+    assert ("technique.md" in system) == exploring
+    assert ("matching ready receipt" in system) == exploring
+    assert ("Evaluation memory is read-only" in system) == (not exploring)
+    assert ("only the first five execute" in system) == (task_id == 1)
+    assert ("pi05_act is not available" in system) == (task_id == 0)

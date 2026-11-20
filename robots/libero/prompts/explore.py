@@ -12,46 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LIBERO exploration prompt.
-
-The evaluation prompt in :mod:`~robots.libero.prompts.evaluate` measures
-single-shot success: one episode, no restarts. Exploration has a different
-job — find an approach that works, however many episodes it takes, and leave
-the knowledge behind in memory.
-
-The two prompts are assembled side by side rather than by patching one into
-the other. That patching is what produced a prompt whose first section said
-"you MUST NOT call `reset`, this overrides everything below" while a later
-section said `reset` was allowed; the agent obeyed the section claiming
-override authority, and four exploration runs silently behaved as
-single-attempt evaluations. Sections that genuinely do not depend on the mode
-(how to localize, what the runtime offers) are imported from ``system``;
-every section that does is written out here in full, so a reader can see the
-whole exploration contract in one file.
-"""
+"""LIBERO multi-attempt exploration and memory distillation."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 
 from robots.libero.prompts import evaluate as base
-from rpent.prompt.utils import Numbered, PromptNode
-
-(
-    BASE_STEP_READ_GUIDES,
-    BASE_STEP_INSPECT_INITIAL,
-    _,
-    BASE_STEP_READ_SEED0_REFS,
-    BASE_STEP_PERCEPTION_PASS,
-    BASE_STEP_EXECUTE,
-    _,
-    _,
-    _,
-) = base.WORKFLOW_STEPS
-
-# ---------------------------------------------------------------------------
-# Role and goal
-# ---------------------------------------------------------------------------
+from rpent.prompt import explore
+from rpent.prompt.utils import PromptNode
 
 ROLE = """You are an LLM-in-the-loop hybrid driver for the LIBERO PRO benchmark, running
 in PERCEPTION-ISOLATED mode: you are NOT given object world coordinates. You
@@ -67,21 +36,18 @@ must localize objects yourself from the camera image + depth + calibration.
 > impossible" has been written confidently about cells that other runs had
 > already solved; it is never the right conclusion, only the tempting one.
 >
-> **YOU ARE AGENT {{session_number}} OF UP TO {{session_max}} ON THIS CELL.** If you
-> exhaust your own ideas, you do not declare the cell unsolvable — you hand off:
-> close out your attempts, write your notes, and finish. A fresh agent picks up
-> your archives and continues without inheriting your dead ends. Handing off
-> early with good notes is a better outcome than grinding to a wrong verdict."""
+> You are agent {{session_number}} of up to {{session_max}} on this cell.
+> At handoff, archive your attempts and record the next hypothesis."""
 
-GOAL = """YOUR GOAL: produce `state.libero_terminated == true`, then distil what you
+GOAL = """YOUR GOAL: produce top-level `terminated == true`, then distil what you
 learned into memory.
 
 Memory has three layers, and you write to all of them:
   `task-specific`   the audit `{{output_dir}}/{{recipe_tag}}.json` plus the replayable
            `{{recipe_tag}}_recipe.jsonl` the runner exports — a matched pair
            describing the ONE sequence that worked. SOLVED CELLS ONLY.
-  `task-family`  one curated md write-up FOR THIS TASK: technique, parameter ranges,
-           per-entity recognition, failure table. Grown at every attempt.
+  `task-family`  one curated task write-up consolidating technique, parameter ranges,
+           per-entity recognition and the failure table from attempt notes.
   `global` cross-task lessons, one per md file.
 
 Memory is produced in TWO STAGES, and the distinction matters:
@@ -111,15 +77,11 @@ force. `**Why:** observed, cause unknown` is a legitimate and useful entry.
 promoted. That is a correct outcome, not a wasted run: the next agent reads
 `wip/` and your attempt archives, and starts from where you stopped."""
 
-# ---------------------------------------------------------------------------
-# Rules — Rule 4 is the exploration-specific one; the rest match evaluation.
-# ---------------------------------------------------------------------------
-
-RULE_4 = """Rule 4 — 🔁 MULTI-ATTEMPT. Prefer in-place recovery first (re-localize,
+ATTEMPTS = """MULTI-ATTEMPT. Prefer in-place recovery first (re-localize,
    re-pre-position, re-`pi0_pick` a missed grasp, climb the Pi0 prompt ladder,
    re-firm the grip, `rotate_pitch` / `move_pose`) — far cheaper than a full
    restart. When an episode is unrecoverable (object tipped or out of reach,
-   wrong-grasp cascade), CLOSE OUT the attempt (WORKFLOW) and `reset` into a
+   wrong-grasp cascade), CLOSE OUT the attempt (see attempt close-out) and `reset` into a
    fresh episode with a CHANGED plan.
 
    ⚠ An unrecoverable EPISODE is not an unsolvable CELL. Breaking that equation
@@ -141,13 +103,7 @@ RULE_4 = """Rule 4 — 🔁 MULTI-ATTEMPT. Prefer in-place recovery first (re-lo
    lever (order, prompt, max_chunks, pose strategy, target choice). A reset with
    an unchanged plan is wasted budget and a duplicate archive entry.
 
-   WHEN TO HAND OFF. You stop this SESSION, never the cell — and not before
-   your attempt budget is spent. `finish` is refused while attempts remain on an
-   unsolved cell, and `reset` is refused once they are gone; between them the
-   runtime decides when you hand off, so plan to use every attempt. Running out
-   of ideas is not a stopping condition: it means the next attempt should come
-   from a CLASS you have not tried. Retrying one class is one experiment however
-   many times you repeat it:
+   Before handing off, consider distinct classes of approaches:
      - scripted OSC pushes / servos;
      - the trained contact skill (`pi0_doubled`), from a clean pose;
      - changing how the servo advances (`step_clip`, `max_steps`, `tol`) rather
@@ -166,19 +122,6 @@ RULE_4 = """Rule 4 — 🔁 MULTI-ATTEMPT. Prefer in-place recovery first (re-lo
    honestly reported, never warped). NO object world coords are provided — you
    MUST localize via perception."""
 
-
-def _rules() -> str:
-    """Evaluation's rules with the single-attempt Rule 4 replaced."""
-    rules = base.RULES
-    start = rules.index("Rule 4 — ")
-    end = rules.find("\nRule 5 — ", start)
-    tail = rules[end:].lstrip("\n") if end != -1 else ""
-    return rules[:start] + RULE_4.strip() + ("\n\n" + tail if tail else "\n")
-
-
-# ---------------------------------------------------------------------------
-# Workflow steps that differ from evaluation
-# ---------------------------------------------------------------------------
 
 STEP_READ_MEMORY = """READ MEMORY for the observed `task_language` and scene. Memory is layered by
 how widely a lesson holds; read it in order of specificity, because the most
@@ -218,7 +161,7 @@ is unrecoverable, close out the attempt, `reset`, and try a changed plan.
 Never warp.
 """
 
-STEP_CLOSE_OUT = """CLOSE OUT EVERY FAILED ATTEMPT — the moment an attempt ends, whether you are
+STEP_CLOSE_OUT = """CLOSE OUT EVERY FAILED ATTEMPT — the moment an unsuccessful attempt ends, whether you are
 about to `reset` or about to stop. Two steps, in order:
 
 a. ARCHIVE IT. Write `{{output_dir}}/attempts/attempt_<N>_failed.json` (N starts
@@ -245,17 +188,18 @@ b. NOTE WHAT YOU LEARNED, NOW — as WORKING NOTES, not as corpus entries. Appen
    ⚠ Nothing goes into the final `task-family`/`global` files or the `task-specific` layer at
    this point. Those are written once, after the cell is solved.
 
-Then `reset` and try again with a plan that differs in a NAMED lever.
+If continuing in this session, `reset` and try again with a plan that differs in a NAMED lever.
 """
 
-STEP_FINISH = """WHEN state.libero_terminated == True — or one of the Rule 4 (a)/(b)/(c)
-conditions permits you to stop. If none holds and the episode is stuck, do NOT
+STEP_FINISH = """WHEN the latest state has top-level `terminated == true`, or when the session
+handoff rule permits an unsolved exit. Truncation alone is unsolved.
+If neither holds and the episode is stuck, do NOT
 come here: close out the attempt and `reset` instead.
 a. If SOLVED: write the audit so it MATCHES the exported recipe — see DISTIL
    step (a) for the correspondence rules and the self-check.
    If UNSOLVED: write `{{output_dir}}/{{recipe_tag}}.json` recording suite,
    task_id, seed, regime, `libero_terminated:false`, total attempts,
-   final_state, which Rule 4 condition permits you to stop, and where each
+   final_state, why this session ended, and where each
    attempt stalled. Claim NO trajectory — there is no recipe to match.
 b. Run the DISTIL pass below.
 c. Call `finish`."""
@@ -267,7 +211,7 @@ edit, rename or delete anything else under `{{memory_dir}}/` — it is a reviewe
 shared corpus and other cells may be running against it. A human merges the
 inbox later.
 
-⚠ NAMING for every md file: the `id` is the BARE slug — the filename with the
+⚠ NAMING for global md files: the `id` is the BARE slug — the filename with the
 `new_`/`task-family_` prefix, the kind, and any `_draft` suffix stripped.
   `new_global_strategy_diagonal-face-perpendicular-push.md`
     -> `id: diagonal-face-perpendicular-push`                      ✅
@@ -282,7 +226,7 @@ parse error. Quote any value containing `: `. In frontmatter `related:` is a
 plain list of bare ids; `[[...]]` is BODY-only syntax.
 
 ⚠ THIS PASS RUNS ONLY WHEN THE CELL IS SOLVED. If it is not, you write the
-unsolved audit (WORKFLOW), leave `wip/notes.md` and the attempt archives as they
+unsolved audit (see attempt close-out), leave `wip/notes.md` and the attempt archives as they
 are, and stop. Nothing is promoted from `wip/`. A conclusion drawn only from
 failures is the one kind of memory that actively misleads the next agent —
 `wip/` is where it belongs until a success confirms or refutes it.
@@ -298,7 +242,7 @@ a. TASK LAYER — **ONLY IF SOLVED.** The audit JSON and the recipe JSONL must b
    runner exports the recipe from that ground-truth trace; after a `reset` it
    keeps only commands issued after the LAST reset — exactly the sequence that
    worked. The automatic finalizer publishes the pair only when both files
-   exist and the environment reported `libero_terminated:true`.
+   exist and the recorded episode reached top-level `terminated:true`.
      - `strategy_notes` states the winning sequence step by step, in the same
        order as the successful state trace, with the parameters actually used. How you
        localized belongs in one opening sentence; the failure history belongs in
@@ -311,9 +255,8 @@ a. TASK LAYER — **ONLY IF SOLVED.** The audit JSON and the recipe JSONL must b
        side. Every manipulation command must be accounted for, and the notes
        must not invent a step absent from the trace.
 
-b. TASK-FAMILY LAYER -> `{{memory_inbox}}/task-family_{{recipe_tag}}_draft.md`. ONE file for
-   this task, updated at every close-out so the failure table grows across
-   attempts. This is what a future run on this task at another seed reads first.
+b. TASK-FAMILY LAYER -> `{{memory_inbox}}/task-family_{{recipe_tag}}_draft.md`. ONE file for this task, consolidating the failure table from
+   the working notes recorded at each close-out. This is what a future run on this task at another seed reads first.
    Frontmatter EXACTLY in this shape — `regime` is the perturbation axis
    (task|swap|lan|object), NOT the perception regime, and `cells` is a LIST of
    cell tags, not a count:
@@ -404,53 +347,38 @@ d. DEDUPE — before writing any new global file, search: `list_dir` the memory
        contradicting observation, the evidence (attempt numbers + measurements),
        and the conditions under which each version might hold.
 
-e. REPORT in your final message: how many lessons you considered, how they split
+e. REPORT in the final `finish` summary: how many lessons you considered, how they split
    across the three layers, how many corroborations you logged, how many
    conflicts you raised."""
 
-#: Exploration workflow. Shared steps come from ``system`` by name — no index
-#: arithmetic, and adding a step to either prompt cannot silently shift the
-#: other.
-WORKFLOW_STEPS = (
-    BASE_STEP_READ_GUIDES,
-    BASE_STEP_INSPECT_INITIAL,
-    STEP_READ_MEMORY,
-    BASE_STEP_READ_SEED0_REFS,
-    BASE_STEP_PERCEPTION_PASS,
-    BASE_STEP_EXECUTE,
-    STEP_PRIMITIVES,
-    STEP_RECOVERY,
-    STEP_CLOSE_OUT,
-    STEP_FINISH,
-    STEP_DISTIL,
-)
-
 
 def system_prompt(variables: Mapping[str, object] | None = None) -> PromptNode:
-    """Assemble the LIBERO exploration system prompt."""
-    enabled = bool((variables or {}).get("enable_direct_action", False))
-    steps = tuple(
-        base.allowed_primitives(enabled) + step if step == STEP_PRIMITIVES else step
-        for step in WORKFLOW_STEPS
+    """Build the exploration workflow with LIBERO attempt and archive rules."""
+    variables = variables or {}
+    enabled = bool(variables.get("enable_direct_action"))
+    budget = variables.get("attempts_per_session")
+    handoff = (
+        f"This session has {budget} attempts. With a positive limit, finish is "
+        "refused on an unsolved cell until the last attempt. Archive and reset "
+        "with a changed plan while attempts remain."
+        if budget
+        else "When there is no attempt limit, hand off with notes once you have "
+        "exhausted the approaches you can test productively."
     )
-    return {
-        "ROLE AND MODE": ROLE,
-        "PROVEN LEVERS & LESSONS — libero_10_task seed-0 sweep solved 9/10 (READ THIS)": (
-            base.PROVEN_LEVERS
+    return explore.system_prompt(
+        role=ROLE,
+        runtime=base.RUNTIME,
+        initialization="\n\n".join(
+            (
+                base.READ_GUIDES,
+                base.INSPECT_INITIAL,
+                STEP_READ_MEMORY,
+                base.READ_SEED0,
+            )
         ),
-        "RUNTIME": base.RUNTIME,
-        "YOUR GOAL": GOAL,
-        "RULES (NON-NEGOTIABLE)": _rules(),
-        "LOCALIZATION — how to get an object's world xyz WITHOUT GT coords": (
-            base.LOCALIZATION
-        ),
-        "FIRST-STEP ALGORITHM — agentview = IDENTITY, wrist = GEOMETRY": (
-            base.PERCEPTION_ALGORITHM
-        ),
-        "WORKFLOW": Numbered(steps),
-        "KEY HYPERPARAMETERS": base.KEY_HYPERPARAMETERS,
-        "OUTPUT DISCIPLINE": base.OUTPUT_DISCIPLINE,
-    }
-
-
-__all__ = ["system_prompt", "WORKFLOW_STEPS"]
+        perception=base.PERCEPTION,
+        action=base.allowed_primitives(enabled) + STEP_PRIMITIVES,
+        action_model_guidance=base.PI0_ACTION,
+        recovery="\n\n".join((handoff, ATTEMPTS, STEP_RECOVERY, STEP_CLOSE_OUT)),
+        success="\n\n".join((GOAL, STEP_FINISH, STEP_DISTIL)),
+    )

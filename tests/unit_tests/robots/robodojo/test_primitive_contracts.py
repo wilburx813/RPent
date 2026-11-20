@@ -657,6 +657,13 @@ def test_policy_prompts_match_configured_backend(tmp_path, mode, backend, backen
     variables = {**config.prompt_vars, "output_dir": str(tmp_path)}
     prompts = robot_spec.get_robot_spec().prompts
     prompt = " ".join(prompts.render("system", variables=variables).split())
+    if mode == "eval-fair":
+        assert "Task success feedback is unavailable" in prompt
+        assert "INITIALIZATION AND MEMORY" not in prompt
+    else:
+        assert "INITIALIZATION AND MEMORY" in prompt
+        assert "remaining_steps" in prompt
+        assert "native success" in prompt
     assert f"{backend}_act(" in prompt
     other = "vpp2" if backend == "awomo05" else "awomo05"
     assert f"{other}_act(" not in prompt

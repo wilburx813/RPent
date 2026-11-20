@@ -17,9 +17,8 @@
 TASK = """- task_name: {{task_name}}
 - instruction: {{instruction}}
 - initial_setup: {{setup}}
-- success_criteria: {{success_criteria}}"""
-
-CONSTRAINTS = """{{constraints}}"""
+- success_criteria: {{success_criteria}}
+- task constraints: {{constraints}}"""
 
 BEGIN = """Call describe_dual_franka_setup, then request_scene_reset before acting.
 After operator confirmation and a successful reset, inspect the fresh visual evidence

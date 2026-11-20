@@ -344,3 +344,35 @@ def test_parallel_segments_preserve_artifacts_without_capturing_state(
     result = robot_toolkit.execute_tool("segment", {"prompt": "next"})
     assert result.data["segment_artifact"] == f"segment_{calls + 1:02d}.json"
     assert state.load(result.data["segment_artifact"], step=0)["prompt"] == "next"
+
+
+@pytest.mark.parametrize("attempts", [0, 2])
+def test_exploration_prompt_uses_configured_handoff_limit(tmp_path, attempts):
+    spec = robot_spec.get_robot_spec()
+    from rpent.cli.main import _build_argparser
+
+    parser = _build_argparser()
+    spec.add_cli_args(parser, use_dashboard=False)
+    args = parser.parse_args(
+        [
+            "--suite",
+            "libero_spatial_task",
+            "--task",
+            "0",
+            "--explore",
+            "--explore-attempts-per-session",
+            str(attempts),
+        ]
+    )
+    config = spec.parse_config(args)
+    variables = {
+        **config.prompt_vars,
+        "memory_dir": tmp_path,
+        "memory_inbox": tmp_path / "inbox",
+        "output_dir": tmp_path / "run",
+    }
+    prompt = spec.prompts.render("system", variables=variables)
+    assert (f"This session has {attempts} attempts." in prompt) is bool(attempts)
+    assert ("hand off with notes once" in prompt) is (attempts == 0)
+    assert "top-level `terminated == true`" in prompt
+    assert "Truncation alone is unsolved" in prompt

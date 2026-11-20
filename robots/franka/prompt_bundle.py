@@ -20,23 +20,21 @@ from collections.abc import Mapping
 
 from robots.franka.prompts import system as system_parts
 from robots.franka.prompts import user as user_parts
-from rpent.prompt.utils import Numbered, PromptNode
+from rpent.prompt import evaluate
 
 
-def system_prompt(variables: Mapping[str, object] | None = None) -> PromptNode:
-    """Assemble the Franka system prompt."""
-    return {
-        "ROLE": system_parts.ROLE,
-        "RUNTIME": system_parts.RUNTIME,
-        "SAFETY RULES": Numbered(system_parts.RULES),
-        "WORKFLOW": Numbered(system_parts.WORKFLOW),
-    }
+def system_prompt(variables: Mapping[str, object] | None = None) -> dict[str, str]:
+    """Assemble the Franka evaluation system prompt."""
+    return evaluate.system_prompt(
+        role=system_parts.ROLE,
+        runtime=system_parts.RUNTIME,
+        initialization=system_parts.INITIALIZATION,
+        action=system_parts.ACTION,
+        recovery=system_parts.STOP,
+        success=system_parts.SUCCESS,
+    )
 
 
-def user_prompt(variables: Mapping[str, object] | None = None) -> PromptNode:
+def user_prompt(variables: Mapping[str, object] | None = None) -> dict[str, str]:
     """Assemble the task-specific initial user prompt."""
-    return {
-        "TASK": user_parts.TASK,
-        "TASK CONSTRAINTS": user_parts.CONSTRAINTS,
-        "BEGIN": user_parts.BEGIN,
-    }
+    return evaluate.user_prompt(user_parts.TASK, user_parts.BEGIN)

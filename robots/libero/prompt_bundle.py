@@ -22,6 +22,7 @@ from robots.libero.prompts import evaluate as evaluate_parts
 from robots.libero.prompts import explore as explore_parts
 from robots.libero.prompts import user as user_parts
 from rpent.prompt.utils import PromptNode
+from rpent.prompt.workflow import user_prompt as workflow_user_prompt
 
 
 def system_prompt(
@@ -40,16 +41,12 @@ def system_prompt(
 def user_prompt(variables: Mapping[str, object] | None = None) -> PromptNode:
     """Assemble the LIBERO user prompt tree."""
     if (variables or {}).get("policy_kind") == "wam":
-        return {
-            "CELL": user_parts.CELL,
-            "MEMORY": user_parts.WAM_MEMORY,
-            "BEGIN": user_parts.WAM_BEGIN,
-        }
-    return {
-        "CELL": user_parts.CELL,
-        "MODE": user_parts.MODE,
-        "BEGIN": user_parts.BEGIN,
-    }
+        return workflow_user_prompt(
+            user_parts.CELL + "\n" + user_parts.WAM_MEMORY, user_parts.WAM_BEGIN
+        )
+    return workflow_user_prompt(
+        user_parts.CELL, user_parts.BEGIN + "\n" + user_parts.MODE
+    )
 
 
 __all__ = ["system_prompt", "user_prompt"]
