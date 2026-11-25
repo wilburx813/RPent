@@ -23,7 +23,8 @@ When the next action is determined, call the tool in the current response."""
 RUNTIME = """Control the environment only through its registered Toolkit. Never drive the
 robot through shell, Python, network clients or legacy command files. Use only
 observations and references authorized for this run. Do not inspect task source,
-evaluator internals, hidden rewards, ground-truth object poses, raw expert
+evaluator internals beyond the excerpts explicitly provided to the planner for
+this run, hidden rewards, ground-truth object poses, raw expert
 trajectories or unapproved historical geometry. Use measured robot state and
 camera-derived geometry exposed by the registered tools."""
 

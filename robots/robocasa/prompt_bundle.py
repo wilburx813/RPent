@@ -18,36 +18,47 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from robots.robocasa.prompts import action_models, system
 from robots.robocasa.prompts import evaluate as evaluate_parts
 from robots.robocasa.prompts import explore as explore_parts
-from rpent.prompt.utils import PromptNode
+from rpent.prompt import evaluate, explore
+from rpent.prompt.workflow import user_prompt as build_user_prompt
 
 
 def system_prompt(
     variables: Mapping[str, object] | None = None,
-) -> dict[str, PromptNode]:
+) -> dict[str, str]:
     """Return the RoboCasa system prompt tree."""
-    if (variables or {}).get("mode", "eval") == "explore":
-        return explore_parts.system_prompt()
-    return evaluate_parts.system_prompt(variables)
+    exploring = (variables or {}).get("mode") == "explore"
+    workflow = explore if exploring else evaluate
+    memory = (
+        explore_parts.MEMORY if exploring else evaluate_parts.initialization(variables)
+    )
+    return workflow.system_prompt(
+        role=system.ROLE + ("\n\n" + explore_parts.ROLE if exploring else ""),
+        runtime="" if exploring else evaluate_parts.OUTPUT_STYLE,
+        initialization=f"{system.START}\n\n{memory}",
+        perception=system.PERCEPTION,
+        action=system.ACTION,
+        action_model_guidance=action_models.VLA_RULES,
+        recovery=explore_parts.RECOVERY if exploring else "",
+        success=system.VERDICT
+        + "\n\n"
+        + (explore_parts.REPORTING if exploring else evaluate_parts.CLOSE_OUT),
+    )
 
 
 def user_prompt(
     variables: Mapping[str, object] | None = None,
-) -> dict[str, PromptNode]:
+) -> dict[str, str]:
     """Return the first user message tree."""
     mode = (
         explore_parts.USER_MODE
         if (variables or {}).get("mode", "eval") == "explore"
         else evaluate_parts.USER_MODE
     )
-    return {
-        "Task": """
-        - task:    {{task_name}} / {{split}}
-        - seed:    {{seed}}
-        - output_dir: {{output_dir}}
-        - output:  {{output_dir}}/
-          - audit filename:  {{recipe_tag}}.json
-        """,
-        "Mode": mode,
-    }
+    return build_user_prompt(
+        task="""Task: {{task_name}} / {{split}}. Seed: {{seed}}.
+Write the audit to {{output_dir}}/{{recipe_tag}}.json.""",
+        begin=mode,
+    )
