@@ -41,11 +41,3 @@ Reserve global proposals for cross-task lessons with observed evidence and
 applicability. Mark unknown causes explicitly. Consolidate the inbox before
 finish. The runner exports the winning commands after the final reset and
 merges validated proposals into the published corpus."""
-
-USER_MODE = """
-Explore mode is active. `reset` starts a fresh attempt and is expected when an
-episode becomes unrecoverable. The attempt limit is {{explore_attempts_per_session}}
-(0 means unlimited). Test a distinct approach each attempt and preserve
-useful evidence for the next session. Start with the
-initial camera views and published memory, then check the current inbox.
-"""
