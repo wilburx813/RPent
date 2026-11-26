@@ -142,6 +142,14 @@ based on options such as ``--am-backend``. For a fixed layout, return the static
 spec as in the example above. Physical environment checks and Dashboard startup
 both call ``resolve_dashboard(args)``.
 
+``prepare_prompt_vars`` is an optional hook that refines prompt variables after
+``init_runtime`` has connected to the task, for example to list the tools the
+connected service actually registers. The returned mapping is merged over
+``RunConfig.prompt_vars`` for both the user- and system-prompt renders; the
+interactive CLI keeps its earlier user render as the editable default of the
+first prompt. If ``get_toolkit`` reads one of these values, derive it from the
+same runtime source so the prompt and the toolkit describe one tool set.
+
 That's the entire registration step — ``_resolve_robot(name)`` does an
 ``importlib.import_module(f"robots.{name}")``, so dropping the package under
 ``robots/`` on disk is enough. No central list to update.
@@ -250,34 +258,65 @@ refer to tools by their bare names (``move_to``, ...) and note once that the
 Claude Code and Codex SDKs show them as ``mcp__rpent__<name>``. Do not
 maintain separate prompt copies for CLI and API planners.
 
+When integrating a manipulation robot, use the common prompts in
+``rpent/prompt/`` by default. Add only instructions specific to the robot
+under ``robots/<robot>/``. The shared ``evaluate.py`` and ``explore.py``
+modules use the same seven system prompt sections defined in ``workflow.py``.
+
+- ``ROLE AND TASK`` — Identify the goal and the evidence needed to establish success.
+- ``RUNTIME AND SAFETY`` — Set tool, access and motion limits.
+- ``INITIALIZATION AND MEMORY`` — Specify the startup checks and memory read order.
+- ``PERCEPTION AND LOCALIZATION`` — Explain how to identify and localize the target.
+- ``ACTION AND VERIFICATION`` — Choose an action and check its physical effect.
+- ``RECOVERY AND BUDGET`` — Decide when to correct, retry or stop.
+- ``SUCCESS AND REPORTING`` — Check the verdict and record the outcome.
+
+Organize robot-specific prompts under ``robots/<robot>/prompts/`` as follows:
+
+- ``system.py`` holds the robot's common system instructions and evaluation
+  rules, such as camera views, coordinate frames and the native success signal.
+- ``explore.py`` holds additions specific to exploration on this robot, such as
+  which records to save before a reset and where to write handoff notes.
+- ``action_models.py`` keeps each action model's instruction format, chunk
+  length and history rules together.
+- ``user.py`` defines the per-run task fields in ``TASK`` and the startup
+  instruction in ``BEGIN``.
+
+In ``robots/<robot>/prompt_bundle.py``, select the shared workflow for the
+run mode and append the robot's instructions to the corresponding sections.
+Pass the active model's guidance through ``action_model_guidance`` to append
+it to ``ACTION AND VERIFICATION``:
+
 .. code-block:: python
 
    # robots/myrobot/prompt_bundle.py
-   from robots.myrobot.prompts import system as system_parts
-   from robots.myrobot.prompts import user as user_parts
-   from rpent.prompt.utils import PromptNode
+   from collections.abc import Mapping
 
-   def system_prompt() -> PromptNode:
-       return {
-           "INTRO": system_parts.PREAMBLE,
-           "GOAL": system_parts.GOAL,
-           "RULES": system_parts.RULES,
-           "WORKFLOW": system_parts.WORKFLOW,
-           "ENVIRONMENT": system_parts.ENVIRONMENT,
-           "OUTPUT": system_parts.OUTPUT,
-       }
+   from robots.myrobot.prompts import action_models, system, user
+   from robots.myrobot.prompts import explore as exploration
+   from rpent.prompt import evaluate, explore
+   from rpent.prompt.workflow import user_prompt as build_user_prompt
 
-   def user_prompt() -> PromptNode:
-       return {
-           "TASK": user_parts.TASK,
-           "BEGIN": user_parts.BEGIN,
-       }
+   def system_prompt(variables: Mapping[str, object] | None = None) -> dict[str, str]:
+       variables = variables or {}
+       exploring = variables.get("mode") == "explore"
+       workflow = explore if exploring else evaluate
+       backend = str(variables.get("policy_backend") or "default")
+       return workflow.system_prompt(
+           role=system.ROLE,
+           perception=system.PERCEPTION,
+           success=exploration.SUCCESS if exploring else system.SUCCESS,
+           action_model_guidance=action_models.GUIDANCE.get(backend, ""),
+       )
 
-Keep the prompt content under the robot package, for example in
-``robots/myrobot/prompts/system.py`` and ``user.py``. Section bodies are plain
-strings (or ``BulletList`` / ``Numbered``) with ``{{suite}}`` / ``{{task}}`` /
-``{{seed}}`` / ``{{output_dir}}`` / ``{{recipe_tag}}`` placeholders filled at
-render time.
+   def user_prompt(variables: Mapping[str, object] | None = None) -> dict[str, str]:
+       return build_user_prompt(user.TASK, user.BEGIN)
+
+Placeholders such as ``{{task_name}}``, ``{{seed}}``, ``{{output_dir}}``,
+``{{memory_dir}}``, and ``{{recipe_tag}}`` are filled by
+``PromptBundle.render`` from ``RunConfig.prompt_vars``. Robots that define
+custom prompt trees outside ``rpent/prompt/workflow.py`` can also use
+``BulletList`` and ``Numbered`` from ``rpent.prompt.utils``.
 
 .. _add-robot-toolkit:
 
@@ -330,6 +369,40 @@ filenames rather than maintaining a parallel observation index.
 the toolkit passes verbatim to your primitives' ``__init__`` — typically
 ``{"env": MyEnvClient(...), "model": VLAClient(...), ...}``.
 
+Customizing External MCP Registration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+By default, RPent registers every server from ``--mcp-config`` (a YAML file
+path) and ``RunConfig.mcp_servers`` automatically after ``get_toolkit`` returns,
+so most robots need no extra code (see :ref:`external-mcp-servers`). To
+restrict a server to specific tools or force ``sync_with_robot=True``, call
+``Toolkit.add_mcp_tools`` before returning from ``get_toolkit``:
+
+.. code-block:: python
+
+   def get_toolkit(*, runtime_kwargs, dashboard_events, config):
+       toolkit = MyRobotToolkit(
+           runtime_kwargs=runtime_kwargs,
+           dashboard_events=dashboard_events,
+           memory=MemoryManager(
+               root=config.prompt_vars.get("memory_dir") or get_memory_dir("myrobot"),
+           ),
+       )
+       if any(server.name == "dock" for server in config.mcp_servers):
+           toolkit.add_mcp_tools(
+               config.mcp_servers,
+               tools={"dock": ["set_charging_dock", "read_battery"]},
+               sync_with_robot=True,
+           )
+       return toolkit
+
+Automatic attachment skips any server already registered through
+``add_mcp_tools`` so tools are never duplicated. Calling ``add_mcp_tools`` for
+an undeclared server or a tool excluded by the server's YAML ``tools`` list
+raises ``ValueError``. Setting ``sync_with_robot=True`` runs those tools
+mutually exclusively with robot actions, triggers ``get_env_state``, and
+preserves the remote response under ``tool_result``.
+
 Conventions Worth Keeping
 -------------------------
 
@@ -376,6 +449,10 @@ validates those fields and returns a
 - ``task_desc`` — robot-specific dict of task-identifying fields, written into
   the transcript JSON record verbatim (LIBERO:
   ``{"suite": ..., "task": ..., "seed": ...}``).
+- ``mcp_servers`` — optional tuple of robot-owned MCP servers (parsed with
+  ``parse_mcp_servers``), merged at runtime with
+  the servers loaded from the ``--mcp-config`` YAML file; see
+  :ref:`external-mcp-servers`.
 
 .. code-block:: python
 

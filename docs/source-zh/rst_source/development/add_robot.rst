@@ -111,6 +111,8 @@ RPent 的整体进程划分、服务职责和通信方式见 :doc:`系统说明 
 
 ``resolve_dashboard(args)`` 回调接收解析后的会话参数，可根据 ``--am-backend`` 等选项选择组件。固定布局直接返回静态配置即可，如上例所示。实体环境检查和 Dashboard 启动均调用此回调。
 
+``prepare_prompt_vars`` 是可选钩子：在 ``init_runtime`` 连接任务后细化 Prompt 变量，例如列出服务实际注册的工具。返回的映射会合并到 ``RunConfig.prompt_vars``，供用户 Prompt 与系统 Prompt 渲染；交互式 CLI 的首条消息仍采用合并前的结果作为可编辑默认值。若 ``get_toolkit`` 也需要这些运行时信息，应让它和 Prompt 根据同一份信息生成工具列表，确保 Prompt 列出的工具与 Toolkit 实际注册的工具一致。
+
 下文依次说明这些模块需要实现的内容。``_add_cli_args`` 和 ``_parse_config`` 见第 4 节，runtime 钩子见第 5 节。
 
 .. _add-robot-env-rpc:
@@ -189,30 +191,51 @@ RPent 的整体进程划分、服务职责和通信方式见 :doc:`系统说明 
 
 定义 ``system_prompt()`` 和 ``user_prompt()`` 两个 prompt 工厂，并在机器人的 ``robot_spec.py`` 中构造 ``PromptBundle(system=system_prompt, user=user_prompt)`` （见上面的“入口”）。每个工厂返回一个有序的 ``dict[str, PromptNode]``，其中包含带标题的分节； ``PromptBundle.render`` 负责组装和填充。一套 prompt 供 API loop、Claude Code 和 Codex 等 planner 共用。正文使用工具的裸名（如 ``move_to``），并说明 Claude Code 和 Codex SDK 会将其显示为 ``mcp__rpent__<name>``；无需分别维护 CLI 与 API 版本。
 
+接入操作类机器人时，优先复用 ``rpent/prompt/`` 中的通用提示词，只在 ``robots/<robot>/`` 下补充该机器人特有的内容。评测和探索分别使用公共的 ``evaluate.py`` 和 ``explore.py``，两者共用 ``workflow.py`` 定义的七个系统提示词分节。
+
+- ``ROLE AND TASK`` — 明确目标，以及判定成功所需的证据。
+- ``RUNTIME AND SAFETY`` — 说明工具、文件访问与运动的限制。
+- ``INITIALIZATION AND MEMORY`` — 规定启动检查和记忆读取顺序。
+- ``PERCEPTION AND LOCALIZATION`` — 说明如何识别目标并确定其位置。
+- ``ACTION AND VERIFICATION`` — 选择动作，并根据观测验证其实际效果。
+- ``RECOVERY AND BUDGET`` — 根据剩余预算决定何时纠偏、重试或停止。
+- ``SUCCESS AND REPORTING`` — 核对环境判定并记录结果。
+
+在 ``robots/<robot>/prompts/`` 下按职责组织提示词：
+
+- ``system.py`` 放机器人共用的系统说明和评测专用规则，例如相机视角、坐标系和原生成功信号。
+- ``explore.py`` 放该机器人在探索模式下追加的规则，例如重置前要保存哪些记录、交接笔记写到哪里。
+- ``action_models.py`` 按动作模型分别维护调用约定，包括输入指令、动作块长度和历史状态。
+- ``user.py`` 定义本轮任务字段 ``TASK`` 和启动指令 ``BEGIN``。
+
+``robots/<robot>/prompt_bundle.py`` 负责组装。它根据本轮模式选择公共工作流，将机器人专用说明追加到对应分节，并通过 ``action_model_guidance`` 将当前动作模型的调用约定追加到 ``ACTION AND VERIFICATION``：
+
 .. code-block:: python
 
    # robots/myrobot/prompt_bundle.py
-   from robots.myrobot.prompts import system as system_parts
-   from robots.myrobot.prompts import user as user_parts
-   from rpent.prompt.utils import PromptNode
+   from collections.abc import Mapping
 
-   def system_prompt() -> PromptNode:
-       return {
-           "INTRO": system_parts.PREAMBLE,
-           "GOAL": system_parts.GOAL,
-           "RULES": system_parts.RULES,
-           "WORKFLOW": system_parts.WORKFLOW,
-           "ENVIRONMENT": system_parts.ENVIRONMENT,
-           "OUTPUT": system_parts.OUTPUT,
-       }
+   from robots.myrobot.prompts import action_models, system, user
+   from robots.myrobot.prompts import explore as exploration
+   from rpent.prompt import evaluate, explore
+   from rpent.prompt.workflow import user_prompt as build_user_prompt
 
-   def user_prompt() -> PromptNode:
-       return {
-           "TASK": user_parts.TASK,
-           "BEGIN": user_parts.BEGIN,
-       }
+   def system_prompt(variables: Mapping[str, object] | None = None) -> dict[str, str]:
+       variables = variables or {}
+       exploring = variables.get("mode") == "explore"
+       workflow = explore if exploring else evaluate
+       backend = str(variables.get("policy_backend") or "default")
+       return workflow.system_prompt(
+           role=system.ROLE,
+           perception=system.PERCEPTION,
+           success=exploration.SUCCESS if exploring else system.SUCCESS,
+           action_model_guidance=action_models.GUIDANCE.get(backend, ""),
+       )
 
-将 prompt 内容保存在机器人包内，例如 ``robots/myrobot/prompts/system.py`` 和 ``user.py``。分节内容可以是普通字符串，也可以使用 ``BulletList`` 或 ``Numbered``。占位符 ``{{suite}}`` / ``{{task}}`` / ``{{seed}}`` / ``{{output_dir}}`` / ``{{recipe_tag}}`` 在渲染时填充。
+   def user_prompt(variables: Mapping[str, object] | None = None) -> dict[str, str]:
+       return build_user_prompt(user.TASK, user.BEGIN)
+
+``PromptBundle.render`` 会根据 ``RunConfig.prompt_vars`` 填充 ``{{task_name}}``、``{{seed}}``、``{{output_dir}}``、``{{memory_dir}}``、``{{recipe_tag}}`` 等占位符。不复用 ``rpent/prompt/workflow.py`` 的机器人也可以继续使用 ``rpent.prompt.utils`` 中的 ``BulletList`` 和 ``Numbered`` 组织自定义分节。
 
 .. _add-robot-toolkit:
 
@@ -240,6 +263,31 @@ toolkit 模块通常包含四部分：
 
 ``runtime_kwargs`` 由 ``robot_spec.py:get_toolkit`` 转发给 toolkit，再原样传入 primitives 的 ``__init__``。其中通常包含 ``{"env": MyEnvClient(...), "model": VLAClient(...), ...}``。
 
+自定义外部 MCP 注册
+~~~~~~~~~~~~~~~~~~~
+
+默认情况下，RPent 会在 ``get_toolkit`` 返回后自动注册 ``--mcp-config``\ （YAML 文件路径）与 ``RunConfig.mcp_servers`` 中的全部外部 MCP 服务，大多数机器人无需编写额外代码（见 :ref:`external-mcp-servers`\ ）。如果机器人需要限定某个服务的可用工具，或要求某组工具与机器人动作互斥执行（``sync_with_robot=True``），可在 ``get_toolkit`` 返回前调用 ``Toolkit.add_mcp_tools``：
+
+.. code-block:: python
+
+   def get_toolkit(*, runtime_kwargs, dashboard_events, config):
+       toolkit = MyRobotToolkit(
+           runtime_kwargs=runtime_kwargs,
+           dashboard_events=dashboard_events,
+           memory=MemoryManager(
+               root=config.prompt_vars.get("memory_dir") or get_memory_dir("myrobot"),
+           ),
+       )
+       if any(server.name == "dock" for server in config.mcp_servers):
+           toolkit.add_mcp_tools(
+               config.mcp_servers,
+               tools={"dock": ["set_charging_dock", "read_battery"]},
+               sync_with_robot=True,
+           )
+       return toolkit
+
+自动注册流程会跳过已通过 ``add_mcp_tools`` 注册的服务，不会重复挂载。如果传入了未声明的服务名，或指定了被该服务 YAML ``tools`` 列表排除的工具，``add_mcp_tools`` 会抛出 ``ValueError``。设置 ``sync_with_robot=True`` 后，这些工具与机器人动作互斥执行（不会并发运行），执行后会触发 ``get_env_state`` 采集观测，并将远端返回内容保存在观测的 ``tool_result`` 字段中。
+
 建议遵循的约定
 --------------
 
@@ -265,6 +313,7 @@ toolkit 模块通常包含四部分：
 - ``output_dir`` —— 单次运行的临时目录路径。main.py 随后调用 ``init_output_dir`` 创建目录并配置日志。
 - ``prompt_vars`` —— 传给 ``PromptBundle.render`` 的字典，通常包含运行标识和 prompt 引用的其他变量。
 - ``task_desc`` —— 机器人特定的任务标识字典，会原样写入 transcript JSON 记录（LIBERO 使用 ``{"suite": ..., "task": ..., "seed": ...}``）。
+- ``mcp_servers`` —— 可选的机器人自带 MCP 服务元组（可用 ``parse_mcp_servers`` 解析），运行时会与 ``--mcp-config`` 所指定 YAML 文件中的服务配置合并，详见 :ref:`external-mcp-servers`。
 
 .. code-block:: python
 
