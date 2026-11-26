@@ -18,36 +18,36 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from robots.robocasa.prompts import evaluate as evaluate_parts
-from robots.robocasa.prompts import explore as explore_parts
-from rpent.prompt.utils import PromptNode
+from robots.robocasa.prompts import action_models, system, user
+from robots.robocasa.prompts import explore as exploration
+from rpent.prompt import evaluate, explore
+from rpent.prompt.workflow import user_prompt as build_user_prompt
 
 
 def system_prompt(
     variables: Mapping[str, object] | None = None,
-) -> dict[str, PromptNode]:
+) -> dict[str, str]:
     """Return the RoboCasa system prompt tree."""
-    if (variables or {}).get("mode", "eval") == "explore":
-        return explore_parts.system_prompt()
-    return evaluate_parts.system_prompt(variables)
+    exploring = (variables or {}).get("mode") == "explore"
+    workflow = explore if exploring else evaluate
+    memory = exploration.MEMORY if exploring else system.evaluation_memory(variables)
+    return workflow.system_prompt(
+        role=system.ROLE + ("\n\n" + exploration.ROLE if exploring else ""),
+        runtime="" if exploring else system.OUTPUT_STYLE,
+        initialization=f"{system.START}\n\n{memory}",
+        perception=system.PERCEPTION,
+        action=system.ACTION,
+        action_model_guidance=action_models.VLA_RULES,
+        recovery=exploration.RECOVERY if exploring else "",
+        success=system.VERDICT
+        + "\n\n"
+        + (exploration.REPORTING if exploring else system.CLOSE_OUT),
+    )
 
 
 def user_prompt(
     variables: Mapping[str, object] | None = None,
-) -> dict[str, PromptNode]:
+) -> dict[str, str]:
     """Return the first user message tree."""
-    mode = (
-        explore_parts.USER_MODE
-        if (variables or {}).get("mode", "eval") == "explore"
-        else evaluate_parts.USER_MODE
-    )
-    return {
-        "Task": """
-        - task:    {{task_name}} / {{split}}
-        - seed:    {{seed}}
-        - output_dir: {{output_dir}}
-        - output:  {{output_dir}}/
-          - audit filename:  {{recipe_tag}}.json
-        """,
-        "Mode": mode,
-    }
+    exploring = (variables or {}).get("mode") == "explore"
+    return build_user_prompt(user.TASK, user.EXPLORE_BEGIN if exploring else user.BEGIN)
