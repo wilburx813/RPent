@@ -204,3 +204,42 @@ hash without running checks. If you overlaid extra packages into the
 environment (such as ``modelscope`` or a custom CUDA PyTorch wheel) and both
 ``uv pip check`` and all component probes succeed, ``doctor`` reports a
 ``warn`` line instead of failing.
+
+FAQ
+---
+
+``torch.cuda.is_available()`` returns ``False`` or a model server exits immediately
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Components such as ``model-sam3``, ``model-rldx``, and ``robot-robocasa`` do not
+pin a specific PyTorch CUDA build. Without ``--torch-backend``, ``uv`` may pull
+the newest CUDA 13.x wheel, which cannot use the GPU on older NVIDIA drivers
+(for example, driver 550). Run ``nvidia-smi`` to check the CUDA version
+supported by your driver and pass a matching backend when installing (for
+example, ``--torch-backend cu126`` or ``UV_TORCH_BACKEND=cu126``).
+
+LIBERO / LIBERO-PRO reports missing ``assets`` even with ``LIBERO_CONFIG_PATH`` set
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When ``UV_LINK_MODE=symlink`` is enabled, ``liberopro`` / ``rpent-libero`` files
+inside the virtual environment are symlinks into the read-only ``uv`` cache, so
+relative asset lookups resolve into the cache directory instead of the
+environment. Avoid ``symlink`` mode for this environment, or reinstall the
+package with ``--link-mode copy`` so its files are materialized inside the
+virtual environment.
+
+Slow installs, GitHub clone stalls, or cache lock timeouts
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- **Cache misses:** When sharing a ``uv`` cache across users or jobs, keep the
+  same PyPI mirror URL; switching mirrors misses the existing cache and forces
+  large wheels to re-download.
+- **Lock timeouts:** Running multiple installs for the same Python version
+  against a shared cache at the same time can hit cache lock timeouts. Run them
+  sequentially and raise ``UV_LOCK_TIMEOUT`` (for example,
+  ``UV_LOCK_TIMEOUT=1200``).
+- **Slow GitHub clones:** Pass Git's temporary ``insteadOf`` environment
+  variables (``GIT_CONFIG_COUNT=1``,
+  ``GIT_CONFIG_KEY_0=url.<mirror-prefix>/https://github.com/.insteadOf``,
+  ``GIT_CONFIG_VALUE_0=https://github.com/``) before running the installer to
+  route Git fetches through a mirror without changing global Git config.
