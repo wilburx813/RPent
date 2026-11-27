@@ -70,6 +70,7 @@ CODE_ROOTS = (
     "tests",
     "requirements",
     "pyproject.toml",
+    ".github/workflows",
     "docs/source-en/conf.py",
     "docs/source-zh/conf.py",
 )

@@ -41,8 +41,8 @@ When `components` (`set[str] | None`) is passed by the Dashboard, start only the
   ```toml
   schema = 2
   name = "robot-my_robot"
-  kind = "robot"
   probe = "robots.my_robot"
+  planner = true
   requires = ["infra-rlinf"]
   dependencies = [
       "upstream-pkg @ git+https://github.com/RLinf/upstream.git@rpent",
@@ -52,10 +52,6 @@ When `components` (`set[str] | None`) is passed by the Dashboard, start only the
 - If a component needs `uv` resolver overrides that must not affect other components, keep them alongside the component (following `components/sim/robodojo/requirements/robodojo-override.txt`) and list them in `overrides`.
 - Run `rpent-install check --all` and `bash tests/tooling/run.sh layout` to validate manifests, package discovery (`setup.py` / `MANIFEST.in`), and import boundaries.
 
-## 4. GPU E2E runner and workflow wiring
+## 4. Declarative GPU E2E suites
 
-Supported GPU CI targets appear in three places that must stay in sync:
-
-1. `tests/e2e_tests/run_gpu_suite.sh`: `case "$target" in` branch plus usage line.
-2. `.github/workflows/embodied-gpu-e2e.yml`: `workflow_dispatch.inputs.target.options` and the `comment-request` `/ci-<target>` allowlist.
-3. `.github/workflows/embodied-gpu-e2e-run.yml`: runner environment variables pointing at shared `/workspace/dataset/...` checkpoints and assets.
+Add a single file `tests/e2e_tests/suites/<suite>.toml` declaring `component`, optional `env`/`base_args`/`[setup]`/`[tool_args]`, and one `[[cases]]` entry per action-model backend. `tests/e2e_tests/run_gpu_suite.sh`, `tests/tooling/ci_targets.py`, and `.github/workflows/embodied-gpu-e2e.yml` discover all `suites/*.toml` files automatically.

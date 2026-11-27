@@ -69,12 +69,16 @@ RPent 的整体进程划分、服务职责和通信方式见 :doc:`系统说明 
 
    * - 字段
      - 说明
+   * - ``schema``
+     - 清单格式版本（当前为 ``2``）。
    * - ``name``
      - 必须为 ``robot-<目录名>``，前缀决定组件类型与代码位置。
    * - ``probe``
      - 可导入的包路径。``rpent-install install`` 与 ``doctor`` 会导入该包及其包含的入口模块（``robot_spec``、``env_client``），确认真实依赖已就绪。
    * - ``planner``
      - 设为 ``true`` 时，在运行时层 ``rpent`` 之上额外安装 ``rpent[planner]``；仅提供模型服务或仿真器的组件可省略此字段。
+   * - ``python``
+     - 支持的 Python 版本范围（例如 ``">=3.10,<3.13"``）；``rpent-install`` 会选择环境内所有组件共同支持的最新版本。
    * - ``requires``
      - 需安装到同一环境中的其他组件（通常是对应的仿真器、模型服务和工具）。
    * - ``dependencies``
@@ -245,7 +249,7 @@ RPent 的整体进程划分、服务职责和通信方式见 :doc:`系统说明 
 2. Prompt
 ---------
 
-prompt 工厂位于 ``prompt_bundle.py``。定义 ``system_prompt()`` 和 ``user_prompt()`` 两个工厂，并在机器人的 ``robot_spec.py`` 中构造 ``PromptBundle(system=system_prompt, user=user_prompt)``（见上面的“入口与组件清单”）。每个工厂返回一个有序的 ``dict[str, PromptNode]``，其中包含带标题的分节；``PromptBundle.render`` 负责组装和填充。一套 prompt 供 API loop、Claude Code 和 Codex 等规划器共用。正文使用工具的裸名（如 ``move_to``），并说明 Claude Code 和 Codex SDK 会将其显示为 ``mcp__rpent__<name>``；无需分别维护 CLI 与 API 版本。
+prompt 工厂位于 ``prompt_bundle.py``。定义 ``system_prompt()`` 和 ``user_prompt()`` 两个工厂，并在机器人的 ``robot_spec.py`` 中构造 ``PromptBundle(system=system_prompt, user=user_prompt)``\ （见上面的“入口与组件清单”）。每个工厂返回一个有序的 ``dict[str, PromptNode]``，其中包含带标题的分节；``PromptBundle.render`` 负责组装和填充。一套 prompt 供 API loop、Claude Code 和 Codex 等规划器共用。正文使用工具的裸名（如 ``move_to``），并说明 Claude Code 和 Codex SDK 会将其显示为 ``mcp__rpent__<name>``；无需分别维护 CLI 与 API 版本。
 
 .. code-block:: python
 
@@ -277,7 +281,7 @@ prompt 工厂位于 ``prompt_bundle.py``。定义 ``system_prompt()`` 和 ``user
 3. 原生工具与 toolkit
 ---------------------
 
-``toolkit.py``（也可与 ``tools.py`` 拆分）负责工具定义、动作原语、每步状态记录，以及允许通过 MCP 调用的工具列表。LIBERO 将这些内容分开存放；新增机器人可以从单个模块开始。
+``toolkit.py``\ （也可与 ``tools.py`` 拆分）负责工具定义、动作原语、每步状态记录，以及允许通过 MCP 调用的工具列表。LIBERO 将这些内容分开存放；新增机器人可以从单个模块开始。
 
 toolkit 模块通常包含四部分：
 
@@ -412,7 +416,7 @@ JSON 产物应使用 ``write_json_atomic``，避免中断写入留下不完整�
 6. 需要补充的测试
 -----------------
 
-新增机器人时，应先分别测试它使用的每个 runtime 组件，再跑一次完整调用链。例如，使用 Env、Pi0.5 和 SAM3 的机器人，需要分别提供环境测试、Pi0.5 推理测试、 SAM3 分割测试，以及完整调用链测试。每个组件都应实际调用一次并检查结果，仅能导入模块或通过服务健康检查还不够。
+新增机器人时，应提供离线 CPU 单元测试，以及通过公开 CLI 覆盖所有暴露工具的声明式 GPU 端到端套件。
 
 测试放在哪里
 ~~~~~~~~~~~~
@@ -420,24 +424,15 @@ JSON 产物应使用 ``write_json_atomic``，避免中断写入留下不完整�
 以下 ``myrobot`` 替换为新机器人的包名：
 
 - ``tests/unit_tests/robots/myrobot/``：离线单元测试，覆盖配置解析、client 参数处理、工具分派，以及 runtime 启动和清理逻辑。用 fake 替代仿真器和模型，保证可在 CPU 上运行。
-- ``tests/e2e_tests/myrobot/test_components.py``：为每个真实组件分别编写测试，例如 ``test_environment_component``、``test_pi05_component`` 和 ``test_sam3_component``；只需覆盖该机器人实际使用的组件。
-- ``tests/e2e_tests/myrobot/test_policy_chain.py``：编写一个串起 planner、 toolkit、模型和环境的完整调用链测试。
-- Fixture 放在同目录的 ``conftest.py``，可复用的场景初始化和调用放在 ``scenario.py``。生命周期与断言辅助函数复用 ``tests/e2e_tests/common.py``，目录组织可参考 ``tests/e2e_tests/libero/``。
+- ``tests/e2e_tests/suites/myrobot.toml``：声明式 GPU 端到端套件，声明安装组件、共享资产与权重路径、工具示例参数，以及一条或多条 ``[[cases]]``\ （每个动作模型后端对应一条用例）。示例见 ``tests/e2e_tests/suites/libero.toml``。
 
-每个组件测什么
+GPU 套件测什么
 ~~~~~~~~~~~~~~
 
-- **Env：** 启动真实环境，用固定 task/seed 执行 reset 并获取观测，检查所需相机图像和状态字段的 shape、dtype。至少执行一个合法动作，再检查下一帧观测、终止信息和成功判定。
-- **VLA 或其他动作模型：** 加载真实 checkpoint，按该机器人的输入格式传入观测和指令，执行一次推理。检查返回动作非空、数值有限，且维度符合环境要求。
-- **感知或其他服务：** 用已知输入实际调用每个服务，并验证输出。例如让 SAM3 分割图像中的已知物体，检查 mask 尺寸与图像一致且包含前景。
+通用 E2E 运行器（``tests/e2e_tests/runner.py`` 与 ``tests/e2e_tests/test_suites.py``）使用离线工具遍历 ``FunctionModel``，针对真实仿真器和模型服务驱动公开 CLI：
 
-通过受支持的 runtime 接口启动各组件，并检查测试结束后自己启动的 daemon 全部退出。复用已有组件时可以复用其测试，但要说明已有覆盖位置，并补测新增的输入输出适配。
+- 每个暴露的工具都会至少调用一次且无报错，随后调用 ``finish``；``tool-coverage.json`` 记录已执行、缺失和失败的调用。
+- 至少执行一次真实环境动作并在 ``states.json`` 中无错误记录，生成预期观测工件，且测试结束后自己启动的 daemon 全部正常退出。
+- 这种有界接入测试不要求任务成功。缺少可选模型权重、解释器或 endpoint 时会自动跳过对应用例。
 
-完整调用链测什么
-~~~~~~~~~~~~~~~~
-
-组件测试通过后，复用 ``tests/e2e_tests/common.py`` 中的 ``run_scripted_policy_chain``，以固定 task/seed 和有限动作数运行公开 CLI。其中的本地 ``OfflinePlannerServer`` 会请求一个真实动作原语，再调用 ``finish``，无需外部 LLM API。环境和模型服务保持真实，不要 monkeypatch CLI 或 runtime 内部实现。
-
-检查至少执行了一个环境动作、transcript 记录了 ``finish``、``states.json`` 包含无错误的动作记录、生成了预期观测工件，以及自己启动的 daemon 全部退出。这种有界接入测试不要求任务成功。
-
-离线测试使用 ``pytest tests/unit_tests/robots/myrobot -v`` 运行。安装该机器人的组件并准备好所需 GPU、checkpoint 和资产后，使用 ``pytest tests/e2e_tests/myrobot -v`` 运行真实组件和调用链测试。干净环境下的 GPU 套件运行方式见 ``tests/README.md`` 和 ``tests/e2e_tests/run_gpu_suite.sh``。
+离线测试使用 ``pytest tests/unit_tests/robots/myrobot -v`` 运行。干净环境下的 GPU 套件运行方式见 :doc:`testing` 和 ``tests/e2e_tests/run_gpu_suite.sh``。

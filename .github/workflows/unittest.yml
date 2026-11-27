@@ -64,7 +64,7 @@ jobs:
       - name: Run unit tests with coverage
         run: |
           .venv/bin/python -m coverage run --source=rpent,robots,components \
-            -m pytest tests/unit_tests -v
+            -m pytest tests/unit_tests -v -rs
           .venv/bin/python -m coverage report -m
 
   package:

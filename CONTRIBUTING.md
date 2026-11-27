@@ -114,7 +114,7 @@ Follow these conventions while developing:
 
 ### Step 4. Run checks and update documentation
 
-Before opening a pull request, run the same required checks as CI:
+For test setup and GPU suites, see [Testing and CI](https://rpent.readthedocs.io/en/latest/rst_source/development/testing.html). Before opening a pull request, run the same required checks as CI:
 
 ```bash
 # Format and lint the complete repository.
@@ -124,8 +124,7 @@ pre-commit run --all-files
 ./tests/tooling/run.sh layout
 ./rpent-install.sh check --all
 
-# Run all unit tests. The suite needs the infra-unit_cpu environment, which
-# infra-dev deliberately omits; see tests/README.md.
+# Run all unit tests in the infra-unit_cpu environment.
 ./rpent-install.sh install infra-unit_cpu --venv .venv-unit-cpu
 .venv-unit-cpu/bin/python -m pytest tests/unit_tests -v
 

@@ -159,3 +159,23 @@
    ./rpent-install.sh doctor --venv .venv-libero --fingerprint
 
 ``--fingerprint`` 只打印环境中记录的 ``rpent-install.json`` 指纹及其哈希，不执行检查。如果在环境中额外叠加安装了其他包（例如 ``modelscope`` 或自定义 CUDA 版本的 PyTorch），只要 ``uv pip check`` 与全部组件导入探针均通过，``doctor`` 只会输出 ``warn`` 提示而不会判定失败。
+
+常见问题（FAQ）
+---------------
+
+装完后 ``torch.cuda.is_available()`` 为 ``False`` 或服务直接退出？
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``model-sam3``、``model-rldx``、``robot-robocasa`` 等组件没有锁死 PyTorch 的 CUDA 版本；不传 ``--torch-backend`` 时，可能会默认装上最新的 CUDA 13.x 版本，在驱动较旧的机器（例如 NVIDIA 550 系列）上无法使用 GPU。先运行 ``nvidia-smi`` 确认驱动支持的 CUDA 版本，安装时显式加上匹配的后端即可（例如 ``--torch-backend cu126``，或设置环境变量 ``UV_TORCH_BACKEND=cu126``）。
+
+配好 ``LIBERO_CONFIG_PATH`` 后，LIBERO / LIBERO-PRO 仍报找不到 ``assets``？
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+如果安装时开启了 ``UV_LINK_MODE=symlink``，虚拟环境里的 ``liberopro`` / ``rpent-libero`` 只是指向 ``uv`` 只读缓存的软链接，运行时会顺着软链接去缓存目录里找资产文件导致报错。安装该环境时关闭 ``symlink`` 模式（使用默认的 ``copy``/``hardlink``），或用 ``--link-mode copy`` 实体重装一次对应包即可解决。
+
+安装很慢、卡在拉取 GitHub，或同时装多个环境时提示锁超时？
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- **共用缓存变慢：** 多人或多任务共享同一个 ``uv`` 缓存目录时，请保持使用同一个 PyPI 镜像源；随意切换镜像源会错失缓存，重新下载大体积依赖包。
+- **并发安装超时：** 同一个 Python 版本的多个安装任务同时写入共享缓存容易抢锁超时，建议顺序安装，并适当调大 ``UV_LOCK_TIMEOUT``\ （如 ``UV_LOCK_TIMEOUT=1200``）。
+- **拉取 GitHub 很慢：** 可在安装命令前通过 Git 临时环境变量走镜像加速，无需修改宿主机全局配置（例如设置 ``GIT_CONFIG_COUNT=1``、``GIT_CONFIG_KEY_0=url.<镜像前缀>/https://github.com/.insteadOf``、``GIT_CONFIG_VALUE_0=https://github.com/``）。

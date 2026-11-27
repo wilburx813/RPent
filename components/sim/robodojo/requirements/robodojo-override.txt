@@ -14,6 +14,7 @@
 #   pyperclip==1.8.0 (isaacsim-core)  vs pydantic-ai-slim[cli] needing >=1.9.0
 #   idna==3.10 (isaacsim-kernel)      vs pydantic-ai-slim needing >=3.18
 #   packaging==23.0 (isaacsim-core)   vs openai-codex needing >=26.2
+#   websockets==12.0 (isaacsim-kernel) vs google-genai/viser needing >=13.1,<17
 #
 # The robodojo component declares this file as an override, so
 # `rpent-install install robot-robodojo` applies it automatically and the rest of
@@ -28,3 +29,4 @@ torch==2.7.0
 pyperclip>=1.9.0
 idna>=3.18
 packaging>=26.2
+websockets>=13.1,<17.0.0

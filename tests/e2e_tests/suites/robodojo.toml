@@ -1,0 +1,36 @@
+component = "robot-robodojo"
+optional_models = ["xpolicylab"]
+base_args = [
+  "--task", "put_bottles_into_dustbin", "--seed", "0", "--layout", "1",
+]
+env = { ROBODOJO_ASSETS_ROOT = "assets/robodojo", OMNI_KIT_ACCEPT_EULA = "YES", SAM3_CHECKPOINT_PATH = "models/sam3/sam3.pt" }
+
+[setup]
+materialize_pkgs = ["isaacsim-kernel"]
+post_install_cmd = [
+  "uv", "pip", "install", "--python", "{python}", "--no-deps",
+  "-e", "assets/robodojo-isaaclab/source/isaaclab",
+  "-e", "assets/robodojo-isaaclab/source/isaaclab_assets",
+  "-e", "assets/robodojo-isaaclab/source/isaaclab_tasks",
+]
+
+[tool_args]
+view_env_state = { step = 0 }
+segment = { text_prompt = "the pink bottle on the table", step = 0 }
+sample_world_xyz = { view = "head", pixels = [[240, 320]], step = 0 }
+set_gripper = { arm = "left", val = 0.5, steps = 2 }
+
+[[cases]]
+name = "vpp2"
+args = ["--am-backend", "vpp2", "--am-checkpoint", "models/vpp2", "--am-python", "venvs/vpp2/bin/python"]
+action_tool = "vpp2_act"
+action_count_field = "executed_actions"
+require_post_action_image = true
+tool_args = { vpp2_act = { chunks = 1, instruction = "Pick up the pink bottle on the table" } }
+
+[[cases]]
+name = "awomo05"
+args = ["--am-backend", "awomo05", "--am-checkpoint", "models/awomo05", "--am-python", "venvs/awomo05/bin/python"]
+action_tool = "awomo05_act"
+action_count_field = "executed_actions"
+require_post_action_image = true

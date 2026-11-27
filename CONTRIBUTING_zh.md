@@ -81,7 +81,7 @@ pre-commit install
 
 ### 第 4 步：运行检查并更新文档
 
-创建 Pull Request 前，请运行与 CI 相同的必需检查：
+如何配置测试环境、运行 GPU 测试，见[测试与 CI](https://rpent.readthedocs.io/zh-cn/latest/rst_source/development/testing.html)。创建 Pull Request 前，请运行与 CI 相同的必需检查：
 
 ```bash
 # 格式化并检查整个仓库。
@@ -91,8 +91,7 @@ pre-commit run --all-files
 ./tests/tooling/run.sh layout
 ./rpent-install.sh check --all
 
-# 运行全部单元测试。该套件需要 infra-unit_cpu 环境，infra-dev 有意不含
-# 其中的依赖；见 tests/README.md。
+# 在 infra-unit_cpu 环境中运行全部单元测试。
 ./rpent-install.sh install infra-unit_cpu --venv .venv-unit-cpu
 .venv-unit-cpu/bin/python -m pytest tests/unit_tests -v
 

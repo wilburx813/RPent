@@ -192,7 +192,9 @@ def build_model_cfg(model_path: str, emb_cfg: dict) -> Any:
     # component guard keeps the failure actionable when the model starts
     # outside its profile, and leaves the module importable in an environment
     # that only holds Torch.
-    OmegaConf = require("model-openpi", "omegaconf").OmegaConf
+    OmegaConf = require(
+        "infra-rlinf", "omegaconf", alternatives=("sim-robodojo",)
+    ).OmegaConf
     return OmegaConf.create(cfg)
 
 

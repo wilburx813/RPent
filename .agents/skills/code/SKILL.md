@@ -21,7 +21,7 @@ RPent's design patterns live in [patterns.md](patterns.md), and the rules CI and
 1. Find the closest current sibling on `main` and start from it (`git log <base> -- <dir>` shows which sibling is recent, so you follow current contracts rather than legacy code).
 2. Plug into the extension point the component kind already has (AGENTS.md § Extending RPent) instead of adding robot- or planner-name branches to shared code.
 3. Read [patterns.md](patterns.md): its design philosophy first, then the Design, Code, and Tests patterns that apply to the change.
-4. Mirror the production module layout under `tests/unit_tests/` (`rpent/`, `robots/<robot>/`, `components/`, `installs/`, `tooling/`, `skills/`), test through the public contract offline on CPU, and mock only external edges ([tests/README.md](../../../tests/README.md)).
+4. Mirror the production module layout under `tests/unit_tests/` (`rpent/`, `robots/<robot>/`, `components/`, `installs/`, `tooling/`, `skills/`), test through the public contract offline on CPU, and mock only external edges ([Testing and CI](https://rpent.readthedocs.io/en/latest/rst_source/development/testing.html)).
 5. Keep optional simulator, VLA, and hardware imports inside the function or branch that uses them so `import rpent`, `enumerate_robots()`, and `rpent --help` work in a core-only environment.
 6. Before you finish, go through [mistakes.md](mistakes.md), run the check below, and run the relevant unit tests.
 
@@ -54,7 +54,7 @@ Then judge what a script cannot decide, comparing every changed function against
 
 ## Verify
 
-Before opening a pull request, run the repository checks in an isolated environment ([CONTRIBUTING.md](../../../CONTRIBUTING.md), [tests/README.md](../../../tests/README.md)):
+Before opening a pull request, run the repository checks in an isolated environment ([CONTRIBUTING.md](../../../CONTRIBUTING.md), [Testing and CI](https://rpent.readthedocs.io/en/latest/rst_source/development/testing.html)):
 
 ```bash
 pre-commit run --all-files

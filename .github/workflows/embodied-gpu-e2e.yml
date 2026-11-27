@@ -1,123 +1,138 @@
-name: Embodied GPU E2E
+name: Simulator CI
 
 on:
-  issue_comment:
-    types: [created]
-  workflow_dispatch:
-    inputs:
-      target:
-        description: Robot stack to test
-        required: true
-        type: choice
-        options:
-          - libero-pro
-          - robocasa
-          - robotwin
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled]
+  push:
+    branches: [main]
 
 permissions:
   contents: read
-  pull-requests: read
+
+concurrency:
+  group: simulator-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  manual:
-    if: github.event_name == 'workflow_dispatch'
-    uses: ./.github/workflows/embodied-gpu-e2e-run.yml
-    with:
-      repository: ${{ github.repository }}
-      revision: ${{ github.sha }}
-      scope: manual-${{ github.sha }}
-      target: ${{ inputs.target }}
-
-  comment-request:
-    if: >-
-      github.event_name == 'issue_comment' &&
-      github.event.issue.pull_request &&
-      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
-      contains(fromJSON('["/ci-libero-pro", "/ci-robocasa", "/ci-robotwin"]'), github.event.comment.body)
+  select:
+    name: Select affected simulator targets
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      pull-requests: write
     outputs:
-      repository: ${{ steps.resolve.outputs.repository }}
-      revision: ${{ steps.resolve.outputs.revision }}
-      scope: ${{ steps.resolve.outputs.scope }}
-      target: ${{ steps.resolve.outputs.target }}
-      comment_id: ${{ steps.reply.outputs.comment_id }}
+      suites: ${{ steps.targets.outputs.suites }}
     steps:
-      - name: Resolve pull request head
-        id: resolve
+      - name: Require 'run-ci' label on pull requests
+        if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'run-ci')
+        run: |
+          echo "This pull request does not have the 'run-ci' label. Add 'run-ci' when ready to run Simulator CI."
+          exit 1
+
+      - name: Require non-draft pull request
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft == true
+        run: |
+          echo "This pull request is a draft. Mark it ready for review before running Simulator CI."
+          exit 1
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Map changed files to simulator targets
+        id: targets
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 tests/tooling/ci_targets.py "$BASE" "$GITHUB_SHA"
+
+  e2e:
+    name: GPU E2E
+    needs: select
+    if: needs.select.outputs.suites != '[]'
+    runs-on: rpent-gpu
+    timeout-minutes: 240
+    env:
+      # Shared resource root consumed by tests/e2e_tests/suites/*.toml
+      RPENT_SHARED_ROOT: /mnt/public/rpent_shared
+
+      # Shared runner and rendering settings (CUDA_VISIBLE_DEVICES comes from each runner's .env)
+      E2E_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+      MUJOCO_GL: egl
+      PYOPENGL_PLATFORM: egl
+
+      # Shared dependency and model caches
+      UV_CACHE_DIR: /mnt/public/rpent_shared/cache/uv
+      UV_LOCK_TIMEOUT: "5400"  # Allow a concurrent cold download the full install budget.
+      UV_LINK_MODE: symlink
+      UV_PYTHON_INSTALL_DIR: /mnt/public/rpent_shared/python
+      UV_TORCH_BACKEND: auto
+      HF_HUB_CACHE: /mnt/public/rpent_shared/models/huggingface/hub
+      OPENPI_DATA_HOME: /mnt/public/rpent_shared/models/openpi
+    steps:
+      - name: Checkout selected revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Run selected GPU suites
+        timeout-minutes: 225
         shell: bash
         env:
-          COMMENT_BODY: ${{ github.event.comment.body }}
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.issue.number }}
+          SUITES_JSON: ${{ needs.select.outputs.suites }}
+          RPENT_INSTALL_TIMEOUT: 90m
+          RPENT_TEST_TIMEOUT: 120m
+          RPENT_GPU_PYTEST_TIMEOUT_SECONDS: "2400"
         run: |
           set -euo pipefail
+          run_dir="$RUNNER_TEMP/rpent-gpu-$E2E_RUN_ID"
+          venv_dir="$RUNNER_TEMP/rpent-venvs-$E2E_RUN_ID"
+          echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
+          uv --version
+          uv cache dir
+          uv python dir
+          python3 tests/tooling/run_ci_jobs.py "$run_dir" "$venv_dir"
 
-          mapfile -t head < <(
-            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" \
-              --jq '.head.repo.full_name, .head.sha'
-          )
-          [[ ${#head[@]} -eq 2 && -n "${head[0]}" && -n "${head[1]}" ]]
+      - name: Upload suite diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gpu-e2e-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rpent-gpu-${{ env.E2E_RUN_ID }}/*.log
+            ${{ runner.temp }}/rpent-gpu-${{ env.E2E_RUN_ID }}/*/rpent-install.json
+            ${{ runner.temp }}/rpent-gpu-${{ env.E2E_RUN_ID }}/**/*-junit.xml
+            ${{ runner.temp }}/rpent-gpu-${{ env.E2E_RUN_ID }}/**/*server.log
+            ${{ runner.temp }}/rpent-gpu-${{ env.E2E_RUN_ID }}/**/tool-coverage.json
+            ${{ runner.temp }}/rpent-gpu-${{ env.E2E_RUN_ID }}/**/*-daemon-cleanup.txt
+          if-no-files-found: ignore
 
-          {
-            echo "repository=${head[0]}"
-            echo "revision=${head[1]}"
-            echo "scope=pr-$PR_NUMBER"
-            echo "target=${COMMENT_BODY#/ci-}"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Reply with run link
-        id: reply
-        continue-on-error: true
+      - name: Clean up
+        if: always()
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.issue.number }}
-          TARGET: ${{ steps.resolve.outputs.target }}
-          REVISION: ${{ steps.resolve.outputs.revision }}
         run: |
-          body_file=$(mktemp "$RUNNER_TEMP/rpent-ci-reply.XXXXXX")
-          trap 'rm -f "$body_file"' EXIT
-          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
-          printf 'Accepted **%s GPU E2E** for commit `%s`.\n\n[View status and logs](%s)\n' \
-            "$TARGET" "$REVISION" "$run_url" > "$body_file"
-          comment_id=$(gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
-            --field "body=@$body_file" --jq '.id')
-          echo "comment_id=$comment_id" >> "$GITHUB_OUTPUT"
+          for path in \
+            "$RUNNER_TEMP/rpent-gpu-$E2E_RUN_ID" \
+            "$RUNNER_TEMP/rpent-venvs-$E2E_RUN_ID"; do
+            if [[ -d "$path" ]]; then
+              find "$path" -depth -delete
+            fi
+          done
 
-  comment:
-    needs: comment-request
-    uses: ./.github/workflows/embodied-gpu-e2e-run.yml
-    with:
-      repository: ${{ needs.comment-request.outputs.repository }}
-      revision: ${{ needs.comment-request.outputs.revision }}
-      scope: ${{ needs.comment-request.outputs.scope }}
-      target: ${{ needs.comment-request.outputs.target }}
-
-  comment-result:
-    needs: [comment-request, comment]
-    if: always() && needs.comment-request.outputs.comment_id != ''
+  # Single stable status check for branch rulesets.
+  simulator-ci:
+    name: simulator-ci
+    if: always()
+    needs: [select, e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      pull-requests: write
     steps:
-      - name: Update reply with result
-        continue-on-error: true
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          COMMENT_ID: ${{ needs.comment-request.outputs.comment_id }}
-          TARGET: ${{ needs.comment-request.outputs.target }}
-          REVISION: ${{ needs.comment-request.outputs.revision }}
-          RESULT: ${{ needs.comment.result }}
+      - name: Require simulator checks to pass
         run: |
-          body_file=$(mktemp "$RUNNER_TEMP/rpent-ci-reply.XXXXXX")
-          trap 'rm -f "$body_file"' EXIT
-          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
-          printf '**%s GPU E2E: %s** for commit `%s`.\n\n[View status and logs](%s)\n' \
-            "$TARGET" "$RESULT" "$REVISION" "$run_url" > "$body_file"
-          gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT_ID" \
-            --field "body=@$body_file" --silent
+          failed=0
+          for result in 'select:${{ needs.select.result }}' \
+                        'e2e:${{ needs.e2e.result }}'; do
+            echo "check result: $result"
+            case "${result#*:}" in
+              success|skipped) ;;
+              *) echo "::error::$result did not succeed"; failed=1 ;;
+            esac
+          done
+          exit "$failed"

@@ -147,6 +147,7 @@ Choose an environment: :doc:`LIBERO <rst_source/simulators/libero>`, :doc:`RoboC
    Add an Action Primitive <rst_source/development/add_primitive>
    Add an Action Model <rst_source/development/add_action_model>
    Add a Planner <rst_source/development/add_planner>
+   Testing and CI <rst_source/development/testing>
 
 .. toctree::
    :maxdepth: 2

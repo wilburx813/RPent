@@ -83,18 +83,14 @@ VLA 启动函数也使用 ``AMConfig.spawn_worker()``。平台保留各自的服
 
 由于模型运行在独立进程中，添加基于模型的原语还需要以下组件：
 
-1. 编写 ``components/models/<name>/server.py``。该进程只持有模型权重和 CUDA 上下文。模型包同时需要 ``component.toml`` 清单。继承 :class:`rpent.components.models.facade.BaseVLAFacade`，实现 ``predict``，并通过扩展 ``_register_rpc`` 注册其他模型 RPC：
+1. **编写模型服务端**\ （``components/models/<name>/server.py``）：该进程只持有模型权重和 CUDA 上下文。模型包同时需要 ``component.toml`` 清单。继承 :class:`rpent.components.models.facade.BaseVLAFacade`，实现 ``predict``，并通过扩展 ``_register_rpc`` 注册其他模型 RPC：
 
-   - 默认传输方式为 **HTTP**，通过 ``POST /call`` 传输 JSON，适合
-     LIBERO/Pi0.5 使用的扁平 ``image + state`` 数据。
-   - 当观测数据包含多帧历史信息或采用嵌套数据结构时，可以切换到
-     **socket RPC**\ （``--transport socket``），避免重复进行 JSON 编码。
+   - 默认传输方式为 **HTTP**，通过 ``POST /call`` 传输 JSON，适合 LIBERO/Pi0.5 使用的扁平 ``image + state`` 数据。
+   - 当观测数据包含多帧历史信息或采用嵌套数据结构时，可以切换到 **socket RPC**\ （``--transport socket``），避免重复进行 JSON 编码。
 
    ``BaseVLAFacade`` 会注册 ``vla.predict`` 并串行化模型调用。构造时传入 ``model_meta=...`` 还会注册只读的 ``vla.get_model_meta`` 路由，元数据字段由具体模型定义。继承的 ``RpcFacade.serve`` 负责绑定传输层、处理 ``healthz`` 和 ``shutdown``、检测父进程退出并清理资源。
 
-2. **编写 model client。** 继承
-   :class:`rpent.components.models.client.BaseVLAClient`；它已经提供
-   公共的 ``vla.predict`` 调用，子类只需增加环境专用的输入 / 输出适配。 LIBERO 的实现可参考 ``components.models.openpi.client.Pi05VLAClient``。
+2. **编写 model client。** 继承 :class:`rpent.components.models.client.BaseVLAClient`；它已经提供公共的 ``vla.predict`` 调用，子类只需增加环境专用的输入 / 输出适配。LIBERO 的实现可参考 ``components.models.openpi.client.Pi05VLAClient``。
 
 3. **在 primitives 中添加方法。** 在当前机器人的 primitives 类中调用 model client，将其返回的动作块交给环境执行，并返回 ``ToolResult``。 model client 的接口是
    :meth:`components.models.openpi.client.Pi05VLAClient.predict`，
@@ -328,4 +324,4 @@ Cosmos3 需要 ``--cosmos3-config`` 和 ``--cosmos3-sglang-endpoint``；该方�
 测试
 ----
 
-新增模型与平台组合时，扩展已有的适配器、RPC 和平台测试。测试位置、GPU 环境要求、运行命令，以及集成检查与任务成功率评测的区别，统一见 ``tests/README.md``。
+新增模型与平台组合时，扩展已有的适配器、RPC 和平台测试。测试目录、GPU 环境要求和运行命令见 :doc:`testing`。
