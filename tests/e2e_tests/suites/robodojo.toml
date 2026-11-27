@@ -1,7 +1,7 @@
 component = "robot-robodojo"
 optional_models = ["xpolicylab"]
 base_args = [
-  "--task", "put_bottles_into_dustbin", "--seed", "0", "--layout", "0",
+  "--task", "put_bottles_into_dustbin", "--seed", "0", "--layout", "1",
 ]
 env = { ROBODOJO_ASSETS_ROOT = "assets/robodojo", OMNI_KIT_ACCEPT_EULA = "YES", SAM3_CHECKPOINT_PATH = "models/sam3/sam3.pt" }
 
